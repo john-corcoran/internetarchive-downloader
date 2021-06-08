@@ -214,21 +214,22 @@ def file_download(
     # either re-download from scratch or attempt resume, depending on resume_flag argument
     if os.path.isfile(dest_file_path):
         if ia_file_size != -1:  # -1 denotes that IA metadata does not contain size info
-            if os.path.getsize(dest_file_path) == expected_file_size:
+            downloaded_file_size = os.path.getsize(dest_file_path)
+            if downloaded_file_size == expected_file_size:
                 log.debug(
                     "'{}' will be skipped as file with expected file size already present at '{}'"
                     .format(dest_file_name, dest_file_path)
                 )
                 return
             else:
-                if os.path.getsize(dest_file_path) < expected_file_size:
+                if downloaded_file_size < expected_file_size:
                     if resume_flag:
                         log.info(
                             "'{}' exists as downloaded file '{}' but file size indicates download"
                             " was not completed; will be resumed ({:.1%} remaining)".format(
                                 dest_file_name,
                                 dest_file_path,
-                                1 - (os.path.getsize(dest_file_path) / expected_file_size),
+                                1 - (downloaded_file_size / expected_file_size),
                             )
                         )
                     else:
@@ -381,9 +382,11 @@ def file_download(
     else:
         # In testing, downloads can timeout occasionally with requests.exceptions.ConnectionError
         # raised; catch and attempt download five times before giving up
-        retry_counter = 0
-        max_retries = 5
-        wait_timer = 300
+        connection_retry_counter = 0
+        size_retry_counter = 0
+        MAX_RETRIES = 5
+        connection_wait_timer = 300
+        size_wait_timer = 300
         while True:
             try:
                 if not resume_flag and chunk_number is None:
@@ -435,14 +438,15 @@ def file_download(
                     headers = request.headers
 
                     if os.path.isfile(dest_file_path) and ia_file_size != -1 and resume_flag:
+                        downloaded_file_size = os.path.getsize(dest_file_path)
                         # If we don't have bytes_range yet, this download isn't a file chunk, so
                         # just download all the remaining file data
                         if bytes_range is None:
-                            bytes_range = (os.path.getsize(dest_file_path), ia_file_size - 1)
+                            bytes_range = (downloaded_file_size, ia_file_size - 1)
                         # Otherwise, this is a file chunk, so only download up to the final amount
                         # needed for this chunk
                         else:
-                            upper_bytes_range = bytes_range[0] + os.path.getsize(dest_file_path)
+                            upper_bytes_range = bytes_range[0] + downloaded_file_size
                             bytes_range = (upper_bytes_range, bytes_range[1])
 
                     # Set the bytes range if we're either resuming a download or downloading a file
@@ -478,27 +482,63 @@ def file_download(
                         pass
 
             except requests.exceptions.ConnectionError:
-                if retry_counter < max_retries:
+                if connection_retry_counter < MAX_RETRIES:
                     log.info(
                         "ConnectionError occurred for '{}', waiting {} minutes before retrying"
                         " (will retry {} more times)".format(
-                            dest_file_name, int(wait_timer / 60), max_retries - retry_counter
+                            dest_file_name,
+                            int(connection_wait_timer / 60),
+                            MAX_RETRIES - connection_retry_counter,
                         )
                     )
-                    time.sleep(wait_timer)
-                    retry_counter += 1
-                    wait_timer *= (
+                    time.sleep(connection_wait_timer)
+                    connection_retry_counter += 1
+                    connection_wait_timer *= (
                         2  # Add some delay for each retry in case connection issue is ongoing
                     )
                 else:
                     log.warning(
                         "'{}' download timed out {} times; this file has not been downloaded"
-                        .format(dest_file_name, max_retries)
+                        " successfully".format(dest_file_name, MAX_RETRIES)
                     )
                     return
+
             else:
-                # If exception has not fired, i.e. download completed successfully, break from the
-                # True loop
+                # In testing, have seen rare instances of the file not being fully downloaded
+                # despite the response object not reporting any more data to write. Perhaps the
+                # server sometimes terminates the connection? So let's check the file is the
+                # expected size and restart/resume the download if not
+                downloaded_file_size = os.path.getsize(dest_file_path)
+                if ia_file_size != -1 and downloaded_file_size < expected_file_size:
+                    if size_retry_counter < MAX_RETRIES:
+                        log.info(
+                            "File '{}' download concluded but file size is not as expected (file"
+                            " size is {} bytes, expected {} bytes). The server possibly terminated"
+                            " the connection - waiting {} minutes before retrying (will retry {}"
+                            " more times)".format(
+                                dest_file_name,
+                                downloaded_file_size,
+                                expected_file_size,
+                                int(size_wait_timer / 60),
+                                MAX_RETRIES - size_retry_counter,
+                            )
+                        )
+                        time.sleep(size_wait_timer)
+                        size_retry_counter += 1
+                        size_wait_timer *= (
+                            2  # Add some delay for each retry in case connection issue is ongoing
+                        )
+                    else:
+                        log.warning(
+                            "Failed to increase downloaded file '{}' to expected file size (final"
+                            " file size is {}, expected {}; this file has not been downloaded"
+                            " successfully".format(
+                                dest_file_name, downloaded_file_size, expected_file_size
+                            )
+                        )
+                        return
+
+                # If no further errors, break from the True loop
                 break
 
     complete_time = datetime.datetime.now()
