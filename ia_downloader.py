@@ -148,7 +148,7 @@ def check_hash(file_path: str, md5_value_from_ia: str) -> typing.Tuple[str, str]
         )
     return (
         "warning",
-        "'{}' file hash does not match between local file ('{}') and IA metadata ('{}')".format(
+        "'{}' file hash does not match between local file ({}) and IA metadata ({})".format(
             os.path.basename(file_path), md5_value_local, md5_value_from_ia
         ),
     )
@@ -385,8 +385,8 @@ def file_download(
         connection_retry_counter = 0
         size_retry_counter = 0
         MAX_RETRIES = 5
-        connection_wait_timer = 300
-        size_wait_timer = 300
+        connection_wait_timer = 600
+        size_wait_timer = 600
         while True:
             try:
                 if not resume_flag and chunk_number is None:
@@ -400,6 +400,7 @@ def file_download(
                     )
                 else:
                     if os.path.isfile(dest_file_path):
+                        downloaded_file_size = os.path.getsize(dest_file_path)
                         if ia_file_size == -1 or not resume_flag:
                             # If we don't have size metadata from IA (i.e. if file_size == -1), then
                             # perform a full re-download. (Although we could run a hash check
@@ -437,8 +438,7 @@ def file_download(
                     request = response.request  # type: requests.PreparedRequest
                     headers = request.headers
 
-                    if os.path.isfile(dest_file_path) and ia_file_size != -1 and resume_flag:
-                        downloaded_file_size = os.path.getsize(dest_file_path)
+                    if file_write_mode == "ab":
                         # If we don't have bytes_range yet, this download isn't a file chunk, so
                         # just download all the remaining file data
                         if bytes_range is None:
@@ -446,46 +446,86 @@ def file_download(
                         # Otherwise, this is a file chunk, so only download up to the final amount
                         # needed for this chunk
                         else:
-                            upper_bytes_range = bytes_range[0] + downloaded_file_size
-                            bytes_range = (upper_bytes_range, bytes_range[1])
+                            lower_bytes_range = bytes_range[0] + downloaded_file_size
+                            bytes_range = (lower_bytes_range, bytes_range[1])
 
                     # Set the bytes range if we're either resuming a download or downloading a file
                     # chunk
                     if bytes_range is not None:
                         headers["Range"] = "bytes={}-{}".format(bytes_range[0], bytes_range[1])
+                        log.debug(
+                            "Range to be requested for IA file '{}' (being downloaded as file"
+                            " '{}') is {}-{}".format(
+                                ia_file_name, dest_file_name, bytes_range[0], bytes_range[1]
+                            )
+                        )
 
                     new_response = requests.get(
                         request.url, headers=headers, timeout=12, stream=True
                     )
 
                     log.debug(
-                        "{} status for request for file '{}'".format(
-                            new_response.status_code, ia_file_name
-                        )
+                        "{} status for request for IA file '{}' (being downloaded as file '{}')"
+                        .format(new_response.status_code, ia_file_name, dest_file_name)
                     )
 
-                    file_download_write_block_size = 1000000
-                    with open(dest_file_path, file_write_mode) as file_handler:
-                        for download_chunk in new_response.iter_content(
-                            chunk_size=file_download_write_block_size
-                        ):
-                            if download_chunk:
-                                file_handler.write(download_chunk)
+                    if new_response.status_code == 200 or new_response.status_code == 206:
+                        file_download_write_block_size = 1000000
+                        with open(dest_file_path, file_write_mode) as file_handler:
+                            for download_chunk in new_response.iter_content(
+                                chunk_size=file_download_write_block_size
+                            ):
+                                if download_chunk:
+                                    file_handler.write(download_chunk)
 
-                    try:
-                        if (
-                            ia_mtime != -1
-                        ):  # -1 denotes that IA metadata does not contain mtime info
-                            os.utime(dest_file_path, (0, ia_mtime))
-                    except OSError:
-                        # Probably file-like object, e.g. sys.stdout.
-                        pass
+                        try:
+                            if (
+                                ia_mtime != -1
+                            ):  # -1 denotes that IA metadata does not contain mtime info
+                                os.utime(dest_file_path, (0, ia_mtime))
+                        except OSError:
+                            # Probably file-like object, e.g. sys.stdout.
+                            pass
+                    elif new_response.status_code == 416:
+                        if size_retry_counter < MAX_RETRIES:
+                            log.info(
+                                "416 status returned for request for IA file '{}' (being downloaded"
+                                " as file '{}') - indicating that the IA server cannot proceed with"
+                                " resumed download at this time - waiting {} minutes before"
+                                " retrying (will retry {} more times)".format(
+                                    ia_file_name,
+                                    dest_file_name,
+                                    int(size_wait_timer / 60),
+                                    MAX_RETRIES - size_retry_counter,
+                                )
+                            )
+                            time.sleep(size_wait_timer)
+                            size_retry_counter += 1
+                            size_wait_timer *= (
+                                2  # Add some delay for each retry in case connection issue is
+                                # ongoing
+                            )
+                            continue
+                        log.warning(
+                            "Persistent 416 statuses returned for IA file '{}' (being downloaded as"
+                            " file '{}') - server may be having temporary issues; download not"
+                            " completed".format(ia_file_name, dest_file_name)
+                        )
+                        return
+                    else:
+                        log.warning(
+                            "Unexpected status code {} returned for IA file '{}' (being downloaded"
+                            " as file '{}') - download not completed".format(
+                                new_response.status_code, ia_file_name, dest_file_name
+                            )
+                        )
+                        return
 
-            except requests.exceptions.ConnectionError:
+            except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
                 if connection_retry_counter < MAX_RETRIES:
                     log.info(
-                        "ConnectionError occurred for '{}', waiting {} minutes before retrying"
-                        " (will retry {} more times)".format(
+                        "ConnectionError/ReadTimeout occurred for '{}', waiting {} minutes before"
+                        " retrying (will retry {} more times)".format(
                             dest_file_name,
                             int(connection_wait_timer / 60),
                             MAX_RETRIES - connection_retry_counter,
@@ -504,25 +544,41 @@ def file_download(
                     return
 
             else:
-                # In testing, have seen rare instances of the file not being fully downloaded
-                # despite the response object not reporting any more data to write. Perhaps the
-                # server sometimes terminates the connection? So let's check the file is the
-                # expected size and restart/resume the download if not
                 downloaded_file_size = os.path.getsize(dest_file_path)
+                # In testing, have seen rare instances of the file not being fully downloaded
+                # despite the response object not reporting any more data to write.
+                # This appears associated with the server suddenly throwing a 416 status -
+                # this can be seen by the partially downloaded file having a tail with content
+                # content similar to:
+                #   <html><head><title>416 Requested Range Not Satisfiable</title></head>
+                #   <body><center><h1>416 Requested Range Not Satisfiable</h1></center>
+                #   <hr><center>nginx/1.18.0 (Ubuntu)</center></body></html>
+                # In testing, can't just remove this tail and resume the download, as when diffing
+                # a completed verified file against a partially downloaded '416' file, the file
+                # data deviates not at the tail but much earlier in the file.
+                # So, let's delete the partially downloaded file in this situation and begin again
                 if ia_file_size != -1 and downloaded_file_size < expected_file_size:
                     if size_retry_counter < MAX_RETRIES:
+                        confirmed_416_issue = False
+                        with open(dest_file_path, "rb") as file_handler:
+                            file_handler.seek(-1024, os.SEEK_END)
+                            if b"416 Requested Range Not Satisfiable" in file_handler.read():
+                                confirmed_416_issue = True
                         log.info(
                             "File '{}' download concluded but file size is not as expected (file"
-                            " size is {} bytes, expected {} bytes). The server possibly terminated"
-                            " the connection - waiting {} minutes before retrying (will retry {}"
-                            " more times)".format(
+                            " size is {} bytes, expected {} bytes). {} - waiting {} minutes before"
+                            " retrying (will retry {} more times)".format(
                                 dest_file_name,
                                 downloaded_file_size,
                                 expected_file_size,
+                                "The server raised a 416 status error, causing file corruption"
+                                if confirmed_416_issue
+                                else "The server possibly terminated the connection",
                                 int(size_wait_timer / 60),
                                 MAX_RETRIES - size_retry_counter,
                             )
                         )
+                        os.remove(dest_file_path)
                         time.sleep(size_wait_timer)
                         size_retry_counter += 1
                         size_wait_timer *= (
@@ -539,7 +595,8 @@ def file_download(
                         return
 
                 # If no further errors, break from the True loop
-                break
+                else:
+                    break
 
     complete_time = datetime.datetime.now()
     duration = complete_time - start_time
