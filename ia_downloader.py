@@ -98,10 +98,20 @@ def get_metadata_from_hashfile(hash_file_path: str, hash_flag: bool) -> typing.D
     return results
 
 
-def get_metadata_from_files_in_folder(folder_path: str, hash_flag: bool) -> typing.Dict[str, str]:
+def get_metadata_from_files_in_folder(
+    folder_path: str,
+    hash_flag: bool,
+    relative_paths_from_ia_metadata: typing.Optional[typing.List[str]] = None,
+) -> typing.Dict[str, str]:
     """Return dict of file paths and metadata of files at a directory (and its subdirectories)"""
     results = {}  # type: typing.Dict[str, str]
-    file_paths = file_paths_in_folder(folder_path)
+    if relative_paths_from_ia_metadata is not None:
+        file_paths = [
+            os.path.join(folder_path, relative_path)
+            for relative_path in relative_paths_from_ia_metadata
+        ]
+    else:
+        file_paths = file_paths_in_folder(folder_path)
     if hash_flag:
         for file_path in tqdm.tqdm(file_paths):
             md5 = md5_hash_file(file_path)
@@ -737,7 +747,7 @@ def download(
     if verify_flag:
         hash_pool = multiprocessing.Pool(PROCESSES, initializer=hash_pool_initializer)
 
-    with open(hash_file, "w") as file_handler:
+    with open(hash_file, "a") as file_handler:
         # Iterate the identifiers list (will only have one iteration unless a collection was passed)
         for identifier in identifiers:
             connection_retry_counter = 0
@@ -871,12 +881,27 @@ def verify(hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: boo
             # Get comparable dictionaries from both the hash metadata file (i.e. IA-side metadata)
             # and local folder of files (i.e. local-side metadata of previously-downloaded files)
             hashfile_metadata = get_metadata_from_hashfile(hash_file, hash_flag)
-            folder_metadata = get_metadata_from_files_in_folder(data_folder, hash_flag)
 
             if hash_flag:
                 md5_or_size_str = "MD5"
             else:
                 md5_or_size_str = "Size"
+
+            try:
+                if no_paths_flag:
+                    folder_metadata = get_metadata_from_files_in_folder(data_folder, hash_flag)
+                else:
+                    relative_paths_from_ia_metadata = list(hashfile_metadata.keys())
+                    folder_metadata = get_metadata_from_files_in_folder(
+                        data_folder, hash_flag, relative_paths_from_ia_metadata
+                    )
+            except FileNotFoundError:
+                log.error(
+                    "Expected file paths not found for verification - make sure the parent"
+                    " download folder was provided rather than the item subfolder (e.g. provide"
+                    " '/downloads/' rather than '/downloads/item/'"
+                )
+                return
 
             # If user has moved files, so they're no longer in the same relative file paths, they
             # will need to set the 'nopaths' flag so that only hash/size metadata is checked rather
@@ -885,13 +910,13 @@ def verify(hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: boo
             # unique hash/size will only be checked for once - so any deletions of multiple copies
             # of the file will not be flagged
             if no_paths_flag:
-                # Get sets of just the hash/size data from each metadata source
-                hashfile_value_set = set(hashfile_metadata.values())
-                folder_value_set = set(folder_metadata.values())
-
                 # Iterate only for hashes/sizes in the IA metadata that are not present in the local
                 # folder of downloaded files
-                for value in [x for x in hashfile_value_set if x not in folder_value_set]:
+                for value in [
+                    value
+                    for value in hashfile_metadata.values()
+                    if value not in folder_metadata.values()
+                ]:
                     log.warning(
                         "{} '{}' (original filename(s) '{}') not found in data folder".format(
                             md5_or_size_str,
