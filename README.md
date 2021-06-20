@@ -40,6 +40,8 @@ Usage example:
 
 The above will `download` all files associated with Internet Archive items with identifiers `gov.archives.arc.1155023` and `TourTheInternationalSpaceStation` to folder `space_videos`.
 
+Internet Archive 'collections' (a special type of item that groups other items together, based on a theme) may also be specified as the identifier, using prefix `collection:`, e.g. `collection:nasa`.
+
 The available flags can be viewed using: `python3 ia_downloader.py download --help`, and are as follows:
 
 - `-t [int]` or `--threads [int]`: number of download threads (i.e. how many file downloads to perform simultaneously). The maximum is `5`, which is also the default if left unspecified.
@@ -47,7 +49,7 @@ The available flags can be viewed using: `python3 ia_downloader.py download --he
 - `-r` or `--resume`: if used, interrupted file transfers will be restarted where they left off, rather than being started over from scratch. In testing, Internet Archive connections can be unstable, so this is recommended for large file transfers. This is marked as 'experimental' as the download process deviates from the core Internet Archive Python Library, and therefore may break in future updates.
 - `-s [int]` or `--split [int]`: if used, the behaviour of downloads will change - instead of multiple files being downloaded simultaneously, only one file will be downloaded at a time, with each file over 10MB split into separate download threads (number of download threads is specified with this flag); each thread will download a separate portion of the file, and the file will be combined when all download threads complete. This may increase per-file download speeds, but will use more temporary storage space as files are downloaded. As above, this is considered experimental. To avoid overloading Internet Archive servers, only one file will be downloaded at a time if this option is used (i.e. `-t` will be ignored). If using `-r` and the script has been restarted, use the same number of splits passed with this argument as was used during previous script execution. The maximum is `5`; the default is `1` (i.e. no file splitting will be performed).
 - `-f [str ... str]` or `--filefilters [str ... str]`: one or more (space separated) file name filters; only files with names that contain any of the provided filter strings (case insensitive) will be downloaded. If multiple filters are provided, the search will be an 'OR' (i.e. only one of the provided strings needs to hit). For example, `-f png jpg` will download all files that contain either `png` or `jpg` in the file name. Individual terms can be wrapped in quotation marks.
-- `--hashfile [str]`: output path to write file containing hash metadata (as recorded by Internet Archive). If left unspecified, the hash metadata file will be created in the output folder. This flag can only be used when one identifier is provided for download.
+- `--hashfile [str]`: output path to write file containing hash metadata (as recorded by Internet Archive). If left unspecified, the hash metadata file will be created in the output folder.
 
 Usage example incorporating flags:
 
@@ -63,9 +65,9 @@ Syntax:
 
 Usage example:
 
-    python3 ia_downloader.py verify space_videos/gov.archives.arc.1155023_20210601_155025_hashes.txt space_videos/gov.archives.arc.1155023
+    python3 ia_downloader.py verify space_videos/20210601_155025_ia_downloader_hashes.txt space_videos
 
-The above will `verify` that the Internet Archive hash metadata (written during a previous download session) in file `space_videos/gov.archives.arc.1155023_20210601_155025_hashes.txt` aligns with hash values that will be calculated by the script for the files as previously downloaded in folder `space_videos/gov.archives.arc.1155023`.
+The above will `verify` that the Internet Archive hash metadata (written during a previous download session) in file `space_videos/20210601_155025_ia_downloader_hashes.txt` aligns with hash values that will be calculated by the script for the files as previously downloaded in folder `space_videos`.
 
 The available flag can be viewed using: `python3 ia_downloader.py verify --help`, and is as follows:
 

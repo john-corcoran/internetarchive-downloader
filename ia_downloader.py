@@ -88,11 +88,13 @@ def get_metadata_from_hashfile(hash_file_path: str, hash_flag: bool) -> typing.D
     results = {}  # type: typing.Dict[str, str]
     with open(hash_file_path, "r", encoding="utf-8") as file_handler:
         for line in file_handler:
-            file_path, size, md5 = line.strip().split("|")
+            identifier, file_path, size, md5 = line.strip().split("|")
             if hash_flag:
-                results[os.path.normpath(file_path)] = md5.lower().strip()
+                results[os.path.join(identifier, os.path.normpath(file_path))] = md5.lower().strip()
             else:
-                results[os.path.normpath(file_path)] = size.lower().strip()
+                results[
+                    os.path.join(identifier, os.path.normpath(file_path))
+                ] = size.lower().strip()
     return results
 
 
@@ -164,6 +166,28 @@ def log_update_callback(result: typing.List[typing.Tuple[str, str]]) -> None:
     getattr(log, log_level)(log_message)
 
 
+def does_file_have_416_issue(file_path: str) -> bool:
+    """Check to see if a file has an embedded '416 status' error in its tail
+
+    Internet Archive servers can sometimes suddenly throw a 416 status ("Requested Range Not
+    Satisfiable") on resumable / split downloads. When this occurs, sometimes the partially
+    downloaded file will have content in its tail similar to:
+      <html><head><title>416 Requested Range Not Satisfiable</title></head>
+      <body><center><h1>416 Requested Range Not Satisfiable</h1></center>
+      <hr><center>nginx/1.18.0 (Ubuntu)</center></body></html>
+    In testing, can't just remove this tail and resume the download, as when diffing a completed
+    verified file against a partially downloaded '416' file, the file data deviates not at the tail
+    but much earlier in the file. So, this function checks to see if this issue has occurred, to
+    make a decision during download of whether the partially downloaded file needs to be removed
+    and started again
+    """
+    with open(file_path, "rb") as file_handler:
+        file_handler.seek(-1024, os.SEEK_END)
+        if b"416 Requested Range Not Satisfiable" in file_handler.read():
+            return True
+    return False
+
+
 def file_download(
     download_details: typing.Tuple[
         str,
@@ -212,24 +236,25 @@ def file_download(
     # If the destination file path exists already (i.e. file has already been (at least partially)
     # downloaded), but the file size doesn't match expectations (i.e. download was incomplete),
     # either re-download from scratch or attempt resume, depending on resume_flag argument
+    initial_file_size = 0
     if os.path.isfile(dest_file_path):
         if ia_file_size != -1:  # -1 denotes that IA metadata does not contain size info
-            downloaded_file_size = os.path.getsize(dest_file_path)
-            if downloaded_file_size == expected_file_size:
+            initial_file_size = os.path.getsize(dest_file_path)
+            if initial_file_size == expected_file_size:
                 log.debug(
                     "'{}' will be skipped as file with expected file size already present at '{}'"
                     .format(dest_file_name, dest_file_path)
                 )
                 return
             else:
-                if downloaded_file_size < expected_file_size:
+                if initial_file_size < expected_file_size:
                     if resume_flag:
                         log.info(
                             "'{}' exists as downloaded file '{}' but file size indicates download"
                             " was not completed; will be resumed ({:.1%} remaining)".format(
                                 dest_file_name,
                                 dest_file_path,
-                                1 - (downloaded_file_size / expected_file_size),
+                                1 - (initial_file_size / expected_file_size),
                             )
                         )
                     else:
@@ -399,8 +424,8 @@ def file_download(
                         silent=True,
                     )
                 else:
+                    partial_file_size = 0
                     if os.path.isfile(dest_file_path):
-                        downloaded_file_size = os.path.getsize(dest_file_path)
                         if ia_file_size == -1 or not resume_flag:
                             # If we don't have size metadata from IA (i.e. if file_size == -1), then
                             # perform a full re-download. (Although we could run a hash check
@@ -413,6 +438,7 @@ def file_download(
                         elif resume_flag:
                             log.info("Resuming download of '{}'".format(dest_file_name))
                             file_write_mode = "ab"
+                            partial_file_size = os.path.getsize(dest_file_path)
                     else:
                         log.info("Beginning download of '{}'".format(dest_file_name))
                         file_write_mode = "wb"
@@ -438,25 +464,33 @@ def file_download(
                     request = response.request  # type: requests.PreparedRequest
                     headers = request.headers
 
+                    updated_bytes_range = None
                     if file_write_mode == "ab":
-                        # If we don't have bytes_range yet, this download isn't a file chunk, so
-                        # just download all the remaining file data
+                        # If we don't have bytes_range, this download isn't a file chunk, so just
+                        # download all the remaining file data
                         if bytes_range is None:
-                            bytes_range = (downloaded_file_size, ia_file_size - 1)
+                            updated_bytes_range = (partial_file_size, ia_file_size - 1)
                         # Otherwise, this is a file chunk, so only download up to the final amount
                         # needed for this chunk
                         else:
-                            lower_bytes_range = bytes_range[0] + downloaded_file_size
-                            bytes_range = (lower_bytes_range, bytes_range[1])
+                            lower_bytes_range = bytes_range[0] + partial_file_size
+                            updated_bytes_range = (lower_bytes_range, bytes_range[1])
+                    elif bytes_range is not None:
+                        updated_bytes_range = bytes_range
 
                     # Set the bytes range if we're either resuming a download or downloading a file
                     # chunk
-                    if bytes_range is not None:
-                        headers["Range"] = "bytes={}-{}".format(bytes_range[0], bytes_range[1])
+                    if updated_bytes_range is not None:
+                        headers["Range"] = "bytes={}-{}".format(
+                            updated_bytes_range[0], updated_bytes_range[1]
+                        )
                         log.debug(
                             "Range to be requested for IA file '{}' (being downloaded as file"
                             " '{}') is {}-{}".format(
-                                ia_file_name, dest_file_name, bytes_range[0], bytes_range[1]
+                                ia_file_name,
+                                dest_file_name,
+                                updated_bytes_range[0],
+                                updated_bytes_range[1],
                             )
                         )
 
@@ -487,6 +521,14 @@ def file_download(
                             # Probably file-like object, e.g. sys.stdout.
                             pass
                     elif new_response.status_code == 416:
+                        if os.path.isfile(dest_file_path):
+                            if does_file_have_416_issue(dest_file_path):
+                                log.info(
+                                    "416 error message has been embedded in partially downloaded"
+                                    " file '{}', causing file corruption; the partially downloaded"
+                                    " file will be deleted".format(dest_file_name)
+                                )
+                                os.remove(dest_file_path)
                         if size_retry_counter < MAX_RETRIES:
                             log.info(
                                 "416 status returned for request for IA file '{}' (being downloaded"
@@ -499,6 +541,7 @@ def file_download(
                                     MAX_RETRIES - size_retry_counter,
                                 )
                             )
+
                             time.sleep(size_wait_timer)
                             size_retry_counter += 1
                             size_wait_timer *= (
@@ -559,21 +602,17 @@ def file_download(
                 # So, let's delete the partially downloaded file in this situation and begin again
                 if ia_file_size != -1 and downloaded_file_size < expected_file_size:
                     if size_retry_counter < MAX_RETRIES:
-                        confirmed_416_issue = False
-                        with open(dest_file_path, "rb") as file_handler:
-                            file_handler.seek(-1024, os.SEEK_END)
-                            if b"416 Requested Range Not Satisfiable" in file_handler.read():
-                                confirmed_416_issue = True
                         log.info(
                             "File '{}' download concluded but file size is not as expected (file"
-                            " size is {} bytes, expected {} bytes). {} - waiting {} minutes before"
-                            " retrying (will retry {} more times)".format(
+                            " size is {} bytes, expected {} bytes). {} - partially downloaded file"
+                            " will be deleted. Waiting {} minutes before retrying (will retry {}"
+                            " more times)".format(
                                 dest_file_name,
                                 downloaded_file_size,
                                 expected_file_size,
                                 "The server raised a 416 status error, causing file corruption"
-                                if confirmed_416_issue
-                                else "The server possibly terminated the connection",
+                                if does_file_have_416_issue(dest_file_path)
+                                else "In this situation the file is likely corrupt",
                                 int(size_wait_timer / 60),
                                 MAX_RETRIES - size_retry_counter,
                             )
@@ -600,13 +639,17 @@ def file_download(
 
     complete_time = datetime.datetime.now()
     duration = complete_time - start_time
-    duration_in_minutes = round(duration.total_seconds() / 60, 2)
-    filesize_in_mb = (expected_file_size / 1024) / 1024
+    duration_in_minutes = duration.total_seconds() / 60
+    # Remove the data that was downloaded in previous sessions (initial_file_size) to get the
+    # amount of data downloaded in this session, for accurate stats on how long it took to download
+    downloaded_data_in_mb = ((expected_file_size - initial_file_size) / 1024) / 1024
     log.info(
-        "'{}' download completed in {} minutes ({}MB per minute)".format(
+        "'{}' download completed in {}{}".format(
             dest_file_name,
-            duration_in_minutes,
-            round(filesize_in_mb / duration_in_minutes, 1),
+            datetime.timedelta(seconds=round(int(duration.total_seconds()))),
+            " ({:.2f}MB per minute)".format(downloaded_data_in_mb / duration_in_minutes)
+            if expected_file_size > 1048576  # 1MB; seems inaccurate for files beneath this size
+            else "",
         )
     )
 
@@ -634,21 +677,59 @@ def download(
 
     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
 
-    log.info(
-        "'{}' contents will be downloaded to '{}'".format(
-            identifier, os.path.join(output_folder, identifier)
-        )
-    )
+    log.info("'{}' contents will be downloaded to '{}'".format(identifier, output_folder))
 
-    # Get Internet Archive metadata for the provided identifier
-    try:
-        item = internetarchive.get_item(identifier)
-    except requests.exceptions.ConnectionError:
-        log.error(
-            "ConnectionError occurred when attempting to connect to Internet Archive - is internet"
-            " connection active?"
-        )
-        return
+    connection_retry_counter = 0
+    MAX_RETRIES = 5
+    connection_wait_timer = 600
+
+    identifiers = []
+    # If the identifier is a collection, get a list of identifiers associated with the collection
+    if identifier.startswith("collection:"):
+        collection_name = identifier[11:]
+        while True:
+            try:
+                search_results = internetarchive.search_items(identifier)
+                for search_result in search_results:
+                    identifiers.append(search_result["identifier"])
+                if len(identifiers) > 0:
+                    log.info(
+                        "Internet Archive collection '{}' contains {} individual Internet Archive"
+                        " items; each will be downloaded".format(collection_name, len(identifiers))
+                    )
+                else:
+                    log.warning(
+                        "No items associated with collection '{}' were identified - was the"
+                        " collection name entered correctly?".format(collection_name)
+                    )
+            except requests.exceptions.ConnectionError:
+                if connection_retry_counter < MAX_RETRIES:
+                    log.info(
+                        "ConnectionError occurred when attempting to connect to Internet Archive to"
+                        " get info for collection '{}' - is internet connection active? Waiting {}"
+                        " minutes before retrying (will retry {} more times)".format(
+                            collection_name,
+                            int(connection_wait_timer / 60),
+                            MAX_RETRIES - connection_retry_counter,
+                        )
+                    )
+                    time.sleep(connection_wait_timer)
+                    connection_retry_counter += 1
+                    connection_wait_timer *= (
+                        2  # Add some delay for each retry in case connection issue is ongoing
+                    )
+                else:
+                    log.warning(
+                        "ConnectionError persisted when attempting to connect to Internet Archive -"
+                        " is internet connection active? Download of collection '{}' has failed"
+                        .format(collection_name)
+                    )
+                    return
+            # If no further errors, break from the True loop
+            else:
+                break
+    else:
+        identifiers = [identifier]
 
     # If user has set to verify, create a new multiprocessing.Pool whose reference will be passed
     # to each download thread to allow for non-blocking hashing
@@ -656,88 +737,130 @@ def download(
     if verify_flag:
         hash_pool = multiprocessing.Pool(PROCESSES, initializer=hash_pool_initializer)
 
-    # Write metadata for files associated with IA identifier to a file, and populate download_queue
-    # with this metadata
-    total_file_count = 0
-    if "files" in item.item_metadata:
-        download_queue = []
-        with open(hash_file, "w") as file_handler:
-            for file in item.item_metadata["files"]:
-                total_file_count += 1
+    with open(hash_file, "w") as file_handler:
+        # Iterate the identifiers list (will only have one iteration unless a collection was passed)
+        for identifier in identifiers:
+            connection_retry_counter = 0
+            connection_wait_timer = 600
+            while True:
+                try:
+                    # Get Internet Archive metadata for the provided identifier
+                    item = internetarchive.get_item(identifier)
+                except requests.exceptions.ConnectionError:
+                    if connection_retry_counter < MAX_RETRIES:
+                        log.info(
+                            "ConnectionError occurred when attempting to connect to Internet"
+                            " Archive to get info for item '{}' - is internet connection active?"
+                            " Waiting {} minutes before retrying (will retry {} more times)".format(
+                                identifier,
+                                int(connection_wait_timer / 60),
+                                MAX_RETRIES - connection_retry_counter,
+                            )
+                        )
+                        time.sleep(connection_wait_timer)
+                        connection_retry_counter += 1
+                        connection_wait_timer *= (
+                            2  # Add some delay for each retry in case connection issue is ongoing
+                        )
+                    else:
+                        log.warning(
+                            "ConnectionError persisted when attempting to connect to Internet"
+                            " Archive - is internet connection active? Download of item '{}' has"
+                            " failed".format(identifier)
+                        )
+                        item = None
+                        break
+                # If no further errors, break from the True loop
+                else:
+                    break
+
+            # Try the next identifier in the list if we've not been able to get info for this one
+            if item is None:
+                continue
+
+            # Write metadata for files associated with IA identifier to a file, and populate
+            # download_queue with this metadata
+            item_file_count = 0
+            if "files" in item.item_metadata:
+                download_queue = []
+                for file in item.item_metadata["files"]:
+                    item_file_count += 1
+                    if file_filters is not None:
+                        if not any(
+                            substring.lower() in file["name"].lower() for substring in file_filters
+                        ):
+                            continue
+                    # In testing it seems that the '[identifier]_files.xml' file will not have size
+                    # or mtime data; the below will set a default size/mtime of '-1' where needed
+                    if "size" not in file:
+                        file["size"] = -1
+                        log.debug("'{}' has no size metadata".format(file["name"]))
+                    if "mtime" not in file:
+                        file["mtime"] = -1
+                        log.debug("'{}' has no mtime metadata".format(file["name"]))
+                    file_handler.write(
+                        "{}|{}|{}|{}\n".format(identifier, file["name"], file["size"], file["md5"])
+                    )
+                    download_queue.append(
+                        (
+                            identifier,
+                            file["name"],
+                            int(file["size"]),
+                            file["md5"],
+                            int(file["mtime"]),
+                            output_folder,
+                            hash_pool,
+                            resume_flag,
+                            split_count,
+                            None,  # bytes_range
+                            None,  # chunk_number
+                        )
+                    )
                 if file_filters is not None:
-                    if not any(
-                        substring.lower() in file["name"].lower() for substring in file_filters
-                    ):
-                        continue
-                # In testing it seems that the '[identifier]_files.xml' file will not have size or
-                # mtime data; the below will set a default size/mtime of '-1' where needed
-                if "size" not in file:
-                    file["size"] = -1
-                    log.debug("'{}' has no size metadata".format(file["name"]))
-                if "mtime" not in file:
-                    file["mtime"] = -1
-                    log.debug("'{}' has no mtime metadata".format(file["name"]))
-                file_handler.write("{}|{}|{}\n".format(file["name"], file["size"], file["md5"]))
-                download_queue.append(
-                    (
-                        identifier,
-                        file["name"],
-                        int(file["size"]),
-                        file["md5"],
-                        int(file["mtime"]),
-                        output_folder,
-                        hash_pool,
-                        resume_flag,
-                        split_count,
-                        None,  # bytes_range
-                        None,  # chunk_number
+                    if len(download_queue) > 0:
+                        log.info(
+                            "{} files match file filter(s) '{}' (case insensitive) and will be"
+                            " downloaded (out of a total of {} files available); file metadata"
+                            " written to '{}'".format(
+                                len(download_queue),
+                                " ".join(file_filters),
+                                item_file_count,
+                                hash_file,
+                            )
+                        )
+                    else:
+                        log.error(
+                            "No files match the filter(s) '{}' - no downloads will be performed"
+                            .format(" ".join(file_filters))
+                        )
+                        return
+                else:
+                    log.info(
+                        "{} files will be downloaded for item '{}'; file metadata written to '{}'"
+                        .format(len(download_queue), identifier, hash_file)
                     )
-                )
-        if file_filters is not None:
-            if len(download_queue) > 0:
-                log.info(
-                    "{} files match file filter(s) '{}' (case insensitive) and will be downloaded"
-                    " (out of a total of {} files available); file metadata written to '{}'".format(
-                        len(download_queue), " ".join(file_filters), total_file_count, hash_file
-                    )
-                )
+
+                # Running under context management here lets the user ctrl+c out and not get a
+                # "ResourceWarning: unclosed running multiprocessing pool
+                # <multiprocessing.pool.ThreadPool ..." error
+                with multiprocessing.pool.ThreadPool(thread_count) as download_pool:
+                    # Chunksize 1 used to ensure downloads occur in filename order
+                    download_pool.map(file_download, download_queue, chunksize=1)
+                    log.debug("Waiting for download pool to complete")
+                    download_pool.close()
+                    download_pool.join()  # Blocks until download threads are complete
+
+                log.info("Downloading for item '{}' complete".format(identifier))
+
             else:
                 log.error(
-                    "No files match the filter(s) '{}' - no downloads will be performed".format(
-                        " ".join(file_filters)
-                    )
+                    "No files found associated with Internet Archive identifier '{}' (check that"
+                    " the correct identifier has been entered)".format(identifier)
                 )
-                os.remove(hash_file)
-                return
-        else:
-            log.info(
-                "{} files will be downloaded; file metadata written to '{}'".format(
-                    len(download_queue), hash_file
-                )
-            )
-
-        # Running under context management here lets the user ctrl+c out and not get a
-        # "ResourceWarning: unclosed running multiprocessing pool
-        # <multiprocessing.pool.ThreadPool ..." error
-        with multiprocessing.pool.ThreadPool(thread_count) as download_pool:
-            # Chunksize 1 used to ensure downloads occur in filename order
-            download_pool.map(file_download, download_queue, chunksize=1)
-            log.debug("Waiting for download pool to complete")
-            download_pool.close()
-            download_pool.join()  # Blocks until download threads are complete
-
-        if hash_pool is not None:
-            log.debug("Waiting for hash tasks to complete")
-            hash_pool.close()
-            hash_pool.join()  # Blocks until hashing processes are complete
-
-        log.info("Downloading for '{}' complete".format(identifier))
-
-    else:
-        log.error(
-            "No files found associated with Internet Archive identifier '{}' (check that the"
-            " correct identifier has been entered)".format(identifier)
-        )
+    if hash_pool is not None:
+        log.debug("Waiting for hash tasks to complete")
+        hash_pool.close()
+        hash_pool.join()  # Blocks until hashing processes are complete
 
 
 def verify(hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: bool):
@@ -807,7 +930,6 @@ def verify(hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: boo
 
 def main() -> None:
     """Captures args via argparse and sets up either downloading threads or verification check"""
-
     run_time = datetime.datetime.now()
     datetime_string = run_time.strftime("%Y%m%d_%H%M%S")
 
@@ -841,7 +963,8 @@ def main() -> None:
         nargs="+",
         help=(
             "One or more (space separated) Archive.org identifiers (e.g."
-            " 'gov.archives.arc.1155023')"
+            " 'gov.archives.arc.1155023'). If specifying a collection (and you wish to download all"
+            " items within the collection), use the prefix 'collection:' (e.g. 'collection:nasa')"
         ),
     )
     download_parser.add_argument("output_folder", type=str, help="Folder to output to")
@@ -949,13 +1072,6 @@ def main() -> None:
                 if args.split > 5:
                     args.split = 5
 
-            if len(args.identifiers) > 1 and args.hashfile is not None:
-                log.warning(
-                    "Custom hashfile path can only be used when one identifier is specified -"
-                    " provided value of '{}' will therefore be ignored".format(args.hashfile)
-                )
-                args.hashfile = None
-
             if args.split > 1:
                 if args.threads > 1:
                     log.info(
@@ -968,7 +1084,7 @@ def main() -> None:
                 if args.hashfile is None:
                     hash_file = os.path.join(
                         args.output_folder,
-                        "{}_{}_hashes.txt".format(identifier, datetime_string),
+                        "{}_ia_downloader_hashes.txt".format(datetime_string),
                     )
                 else:
                     hash_file = args.hashfile
@@ -990,7 +1106,7 @@ def main() -> None:
                 if counter_handler.count["ERROR"] == 0:
                     verify(
                         hash_file=hash_file,
-                        data_folder=os.path.join(args.output_folder, identifier),
+                        data_folder=args.output_folder,
                         no_paths_flag=False,
                         hash_flag=False,
                     )
