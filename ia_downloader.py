@@ -10,14 +10,32 @@ import multiprocessing
 import multiprocessing.pool
 import os
 import pathlib
+import platform
 import signal
 import sys
 import time
 import typing
 
-import internetarchive
-import requests
-import tqdm
+python_major, python_minor = platform.python_version_tuple()[0:2]
+if int(python_major) < 3 or int(python_minor) < 7:
+    print(
+        "Please use Python 3.7 or above (version currently installed is {})".format(
+            platform.python_version()
+        )
+    )
+    sys.exit()
+
+try:
+    import internetarchive
+    import requests
+    import tqdm
+except ModuleNotFoundError:
+    print(
+        "Error loading Internet Archive module or dependencies - ensure that the Internet Archive"
+        " Python Library has been installed:"
+        " https://archive.org/services/docs/api/internetarchive/installation.html"
+    )
+    sys.exit()
 
 
 class MsgCounterHandler(logging.Handler):
@@ -63,6 +81,25 @@ def prepare_logging(
     log.addHandler(info_log)
     log.addHandler(console_handler)
     log.addHandler(counter_handler)
+    # Log platform details and commandline arguments
+    platform_detail_requests = [
+        "python_version",
+        "system",
+        "machine",
+        "platform",
+        "version",
+        "mac_ver",
+    ]
+    for platform_detail_request in platform_detail_requests:
+        try:
+            log.debug(
+                "{}: {}".format(
+                    platform_detail_request, getattr(platform, platform_detail_request)()
+                )
+            )
+        except:
+            pass
+    log.debug("commandline: {}".format(sys.argv))
     return log, counter_handler
 
 
@@ -74,6 +111,18 @@ def check_argument_int_greater_than_one(value: str) -> int:
     return ivalue
 
 
+def bytes_filesize_to_readable_str(bytes_filesize: int) -> str:
+    """Convert bytes integer to kilobyte/megabyte/gigabyte/terabyte equivalent string"""
+    if bytes_filesize < 1024:
+        return "{} B"
+    num = float(bytes_filesize)
+    for unit in ["B", "KB", "MB", "GB"]:
+        if abs(num) < 1024.0:
+            return "{:.1f} {}".format(num, unit)
+        num /= 1024.0
+    return "{:.1f} {}".format(num, "TB")
+
+
 def file_paths_in_folder(folder_path: str) -> typing.List[str]:
     """Return sorted list of paths of files at a directory (and its subdirectories)"""
     file_paths = []
@@ -83,18 +132,23 @@ def file_paths_in_folder(folder_path: str) -> typing.List[str]:
     return sorted(file_paths)
 
 
-def get_metadata_from_hashfile(hash_file_path: str, hash_flag: bool) -> typing.Dict[str, str]:
+def get_metadata_from_hashfile(
+    hash_file_path: str, hash_flag: bool, identifier_filter: str = None
+) -> typing.Dict[str, str]:
     """Return dict of file paths and associated metadata parsed from IA hash metadata CSV"""
     results = {}  # type: typing.Dict[str, str]
     with open(hash_file_path, "r", encoding="utf-8") as file_handler:
         for line in file_handler:
             identifier, file_path, size, md5 = line.strip().split("|")
-            if hash_flag:
-                results[os.path.join(identifier, os.path.normpath(file_path))] = md5.lower().strip()
-            else:
-                results[
-                    os.path.join(identifier, os.path.normpath(file_path))
-                ] = size.lower().strip()
+            if identifier_filter is None or identifier == identifier_filter:
+                if hash_flag:
+                    results[
+                        os.path.join(identifier, os.path.normpath(file_path))
+                    ] = md5.lower().strip()
+                else:
+                    results[
+                        os.path.join(identifier, os.path.normpath(file_path))
+                    ] = size.lower().strip()
     return results
 
 
@@ -114,13 +168,17 @@ def get_metadata_from_files_in_folder(
         file_paths = file_paths_in_folder(folder_path)
     if hash_flag:
         for file_path in tqdm.tqdm(file_paths):
-            md5 = md5_hash_file(file_path)
-            results[os.path.normpath(os.path.relpath(file_path, folder_path))] = md5.lower().strip()
+            if os.path.isfile(file_path):
+                md5 = md5_hash_file(file_path)
+                results[
+                    os.path.normpath(os.path.relpath(file_path, folder_path))
+                ] = md5.lower().strip()
     else:
         # Return file sizes if we're not checking hash values
         for file_path in file_paths:
-            file_size = os.path.getsize(file_path)
-            results[os.path.normpath(os.path.relpath(file_path, folder_path))] = str(file_size)
+            if os.path.isfile(file_path):
+                file_size = os.path.getsize(file_path)
+                results[os.path.normpath(os.path.relpath(file_path, folder_path))] = str(file_size)
     return results
 
 
@@ -666,9 +724,12 @@ def file_download(
     # If user has opted to verify downloads, add the task to the hash_pool
     if chunk_number is None:  # Only hash if we're in a thread that isn't downloading a file chunk
         if hash_pool is not None:
-            hash_pool.starmap_async(
-                check_hash, iterable=[(dest_file_path, ia_md5)], callback=log_update_callback
-            )
+            # Don't hash the [identifier]_files.xml file, as this regularly gives false
+            # positives (see README Known Issues)
+            if dest_file_name != "{}_files.xml".format(identifier):
+                hash_pool.starmap_async(
+                    check_hash, iterable=[(dest_file_path, ia_md5)], callback=log_update_callback
+                )
 
 
 def download(
@@ -712,6 +773,7 @@ def download(
                         "No items associated with collection '{}' were identified - was the"
                         " collection name entered correctly?".format(collection_name)
                     )
+                    return
             except requests.exceptions.ConnectionError:
                 if connection_retry_counter < MAX_RETRIES:
                     log.info(
@@ -791,10 +853,14 @@ def download(
             # Write metadata for files associated with IA identifier to a file, and populate
             # download_queue with this metadata
             item_file_count = 0
+            item_total_size = 0
+            item_filtered_files_size = 0
             if "files" in item.item_metadata:
                 download_queue = []
                 for file in item.item_metadata["files"]:
                     item_file_count += 1
+                    if "size" in file:
+                        item_total_size += int(file["size"])
                     if file_filters is not None:
                         if not any(
                             substring.lower() in file["name"].lower() for substring in file_filters
@@ -805,6 +871,8 @@ def download(
                     if "size" not in file:
                         file["size"] = -1
                         log.debug("'{}' has no size metadata".format(file["name"]))
+                    else:
+                        item_filtered_files_size += int(file["size"])
                     if "mtime" not in file:
                         file["mtime"] = -1
                         log.debug("'{}' has no mtime metadata".format(file["name"]))
@@ -829,25 +897,32 @@ def download(
                 if file_filters is not None:
                     if len(download_queue) > 0:
                         log.info(
-                            "{} files match file filter(s) '{}' (case insensitive) and will be"
-                            " downloaded (out of a total of {} files available); file metadata"
+                            "{} files ({}) match file filter(s) '{}' (case insensitive) and will be"
+                            " downloaded (out of a total of {} files ({}) available); file metadata"
                             " written to '{}'".format(
                                 len(download_queue),
+                                bytes_filesize_to_readable_str(item_filtered_files_size),
                                 " ".join(file_filters),
                                 item_file_count,
+                                bytes_filesize_to_readable_str(item_total_size),
                                 hash_file,
                             )
                         )
                     else:
-                        log.error(
+                        log.warning(
                             "No files match the filter(s) '{}' - no downloads will be performed"
                             .format(" ".join(file_filters))
                         )
-                        return
+                        continue
                 else:
                     log.info(
-                        "{} files will be downloaded for item '{}'; file metadata written to '{}'"
-                        .format(len(download_queue), identifier, hash_file)
+                        "{} files ({}) will be downloaded for item '{}'; file metadata written to"
+                        " '{}'".format(
+                            len(download_queue),
+                            bytes_filesize_to_readable_str(item_total_size),
+                            identifier,
+                            hash_file,
+                        )
                     )
 
                 # Running under context management here lets the user ctrl+c out and not get a
@@ -860,10 +935,23 @@ def download(
                     download_pool.close()
                     download_pool.join()  # Blocks until download threads are complete
 
-                log.info("Downloading for item '{}' complete".format(identifier))
+                # Do a 'basic' verification of data (just checking file sizes and paths, not hash
+                # values) - this is separate to hash checks that will be performed as downloads
+                # complete if the user has opted to '--verify'
+                log.info("Download phase complete for item '{}'".format(identifier))
+                # Ensure hash file is written to disk to use in verify function
+                file_handler.flush()
+                os.fsync(file_handler.fileno())
+                verify(
+                    hash_file=hash_file,
+                    data_folder=output_folder,
+                    no_paths_flag=False,
+                    hash_flag=False,
+                    identifier=identifier,
+                )
 
             else:
-                log.error(
+                log.warning(
                     "No files found associated with Internet Archive identifier '{}' (check that"
                     " the correct identifier has been entered)".format(identifier)
                 )
@@ -873,35 +961,109 @@ def download(
         hash_pool.join()  # Blocks until hashing processes are complete
 
 
-def verify(hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: bool):
+def verify(
+    hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: bool, identifier: str = None
+):
     """Verify that previously-downloaded files are complete"""
     log = logging.getLogger(__name__)
     if os.path.isfile(hash_file):
         if os.path.isdir(data_folder):
             # Get comparable dictionaries from both the hash metadata file (i.e. IA-side metadata)
             # and local folder of files (i.e. local-side metadata of previously-downloaded files)
-            hashfile_metadata = get_metadata_from_hashfile(hash_file, hash_flag)
+            hashfile_metadata = get_metadata_from_hashfile(hash_file, hash_flag, identifier)
+            if len(hashfile_metadata) == 0:
+                log.error(
+                    "Hash file '{}' is empty - check correct file has been provided".format(
+                        hash_file
+                    )
+                )
+                return
+            relative_paths_from_ia_metadata = list(hashfile_metadata.keys())
 
             if hash_flag:
                 md5_or_size_str = "MD5"
             else:
                 md5_or_size_str = "Size"
 
-            try:
-                if no_paths_flag:
-                    folder_metadata = get_metadata_from_files_in_folder(data_folder, hash_flag)
-                else:
-                    relative_paths_from_ia_metadata = list(hashfile_metadata.keys())
-                    folder_metadata = get_metadata_from_files_in_folder(
-                        data_folder, hash_flag, relative_paths_from_ia_metadata
-                    )
-            except FileNotFoundError:
-                log.error(
-                    "Expected file paths not found for verification - make sure the parent"
-                    " download folder was provided rather than the item subfolder (e.g. provide"
-                    " '/downloads/' rather than '/downloads/item/'"
+            if identifier is None:
+                log.info(
+                    "Verification of {} metadata for files in folder '{}' (using hash file '{}')"
+                    " begun".format(md5_or_size_str, data_folder, hash_file)
                 )
-                return
+            else:
+                log.info(
+                    "Verification of {} metadata for item '{}' files begun".format(
+                        md5_or_size_str, identifier
+                    )
+                )
+
+            mismatch_count = 0
+            if no_paths_flag:
+                folder_metadata = get_metadata_from_files_in_folder(data_folder, hash_flag)
+            else:
+                unique_identifier_dirs_from_ia_metadata = sorted(
+                    list(
+                        set(
+                            [
+                                pathlib.Path(relative_path).parts[0]
+                                for relative_path in relative_paths_from_ia_metadata
+                            ]
+                        )
+                    )
+                )
+                # Print warnings for item folders referenced in IA metadata that aren't found in
+                # the provided data folder
+                nonexistent_dirs = []
+                for identifier_dir in unique_identifier_dirs_from_ia_metadata:
+                    if not os.path.isdir(os.path.join(data_folder, identifier_dir)):
+                        log.warning(
+                            "Expected item folder '{}' was not found in provided data folder '{}' -"
+                            " make sure the parent download folder was provided rather than the"
+                            " item subfolder (e.g. provide '/downloads/' rather than"
+                            " '/downloads/item/'".format(identifier_dir, data_folder)
+                        )
+                        nonexistent_dirs.append(identifier_dir)
+
+                folder_metadata = get_metadata_from_files_in_folder(
+                    data_folder, hash_flag, relative_paths_from_ia_metadata
+                )
+
+                # Group warnings for each file in a non-existent folder into one unified warning
+                for nonexistent_dir in nonexistent_dirs:
+                    nonexistent_files = [
+                        relative_path
+                        for relative_path in relative_paths_from_ia_metadata
+                        if pathlib.Path(relative_path).parts[0] == nonexistent_dir
+                    ]
+                    log.warning(
+                        "Files in non-existent folder '{}' not found: {}".format(
+                            nonexistent_dir,
+                            ", ".join(
+                                [
+                                    "'{}'".format(nonexistent_file)
+                                    for nonexistent_file in nonexistent_files
+                                ]
+                            ),
+                        )
+                    )
+                    mismatch_count += len(nonexistent_files)
+                    # Delete non-existent files from the hashfile_metadata so we don't end up
+                    # iterating these later and printing more warning messages than necessary
+                    for nonexistent_file in nonexistent_files:
+                        if nonexistent_file in hashfile_metadata:
+                            del hashfile_metadata[nonexistent_file]
+
+            # Don't consider the [identifier]_files.xml files, as these regularly gives false
+            # positives (see README Known Issues)
+            xml_files_to_be_removed = [
+                relative_path
+                for relative_path in relative_paths_from_ia_metadata
+                if os.path.basename(relative_path)
+                == "{}_files.xml".format(pathlib.Path(relative_path).parts[0])
+            ]
+            for xml_file_to_be_removed in xml_files_to_be_removed:
+                if xml_file_to_be_removed in hashfile_metadata:
+                    del hashfile_metadata[xml_file_to_be_removed]
 
             # If user has moved files, so they're no longer in the same relative file paths, they
             # will need to set the 'nopaths' flag so that only hash/size metadata is checked rather
@@ -924,11 +1086,13 @@ def verify(hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: boo
                             [k for k, v in hashfile_metadata.items() if v == value],
                         )
                     )
+                    mismatch_count += 1
 
             else:
                 for file_path, value in hashfile_metadata.items():
                     if file_path not in folder_metadata:
                         log.warning("File '{}' not found in data folder".format(file_path))
+                        mismatch_count += 1
                     else:
                         if value != folder_metadata[file_path]:
                             if value != "-1":
@@ -941,11 +1105,24 @@ def verify(hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: boo
                                         folder_metadata[file_path],
                                     )
                                 )
+                                mismatch_count += 1
                             else:
                                 log.debug(
                                     "File '{}' {} is not available in IA metadata, so verification"
                                     " not performed on this file".format(file_path, md5_or_size_str)
                                 )
+
+            log.info(
+                "Verification complete: {}".format(
+                    "{} files were not present or did not match Internet Archive {} metadata"
+                    .format(mismatch_count, md5_or_size_str)
+                    if mismatch_count > 0
+                    else (
+                        "all files were verified against Internet Archive {} data with no issues"
+                        " identified".format(md5_or_size_str)
+                    )
+                )
+            )
 
         else:
             log.error("Folder '{}' does not exist".format(data_folder))
@@ -1078,7 +1255,6 @@ def main() -> None:
     # Set up logging
     pathlib.Path(args.logfolder).mkdir(parents=True, exist_ok=True)
     log, counter_handler = prepare_logging(datetime_string, args.logfolder, "ia_downloader")
-    log.debug(sys.argv)
     log.info(
         "Internet Archive is a non-profit organisation that is experiencing unprecedented service"
         " demand. Please consider making a donation: https://archive.org/donate"
@@ -1092,10 +1268,8 @@ def main() -> None:
                     "Reducing download threads to 5, to optimise script performance and reduce"
                     " Internet Archive server load"
                 )
-                if args.threads > 5:
-                    args.threads = 5
-                if args.split > 5:
-                    args.split = 5
+                args.threads = min(args.threads, 5)
+                args.split = min(args.split, 5)
 
             if args.split > 1:
                 if args.threads > 1:
@@ -1125,17 +1299,6 @@ def main() -> None:
                     file_filters=args.filefilters,
                 )
 
-                # If no errors occurred, do a 'basic' verification of data (just checking file sizes
-                # and paths, not hash values) - this is separate to hash checks that will be
-                # performed as downloads complete if the user has opted to '--verify'
-                if counter_handler.count["ERROR"] == 0:
-                    verify(
-                        hash_file=hash_file,
-                        data_folder=args.output_folder,
-                        no_paths_flag=False,
-                        hash_flag=False,
-                    )
-
         elif args.command == "verify":
             verify(
                 hash_file=args.hashfile,
@@ -1144,11 +1307,16 @@ def main() -> None:
                 hash_flag=True,
             )
 
-        if counter_handler.count["WARNING"] > 0:
+        if counter_handler.count["WARNING"] > 0 or counter_handler.count["ERROR"] > 0:
             log.warning(
-                "{} warnings occurred requiring review (see log entries above, replicated in folder"
-                " '{}')".format(counter_handler.count["WARNING"], args.logfolder)
+                "Script complete; {} warnings/errors occurred requiring review (see log entries"
+                " above, replicated in folder '{}')".format(
+                    counter_handler.count["WARNING"] + counter_handler.count["ERROR"],
+                    args.logfolder,
+                )
             )
+        else:
+            log.info("Script complete; no errors reported")
 
     except KeyboardInterrupt:
         log.warning(

@@ -1,6 +1,6 @@
 # Internet Archive Downloader
 
-This script uses multithreading and multiprocessing in conjunction with the [Internet Archive Python Library](https://archive.org/services/docs/api/internetarchive/) to provide bulk downloads of files associated with Internet Archive items, with optional interrupted download resumption and file hash verification.
+This script uses multithreading and multiprocessing in conjunction with the [Internet Archive Python Library](https://archive.org/services/docs/api/internetarchive/) to provide bulk downloads of files associated with Internet Archive ([archive.org](https://archive.org/)) items, with optional interrupted download resumption and file hash verification.
 
 ## Getting started
 
@@ -8,7 +8,7 @@ This script uses multithreading and multiprocessing in conjunction with the [Int
 
 Python 3.7 or later is required, with the Internet Archive Python Library installed ([Internet Archive Python Library installation instructions](https://archive.org/services/docs/api/internetarchive/installation.html)).
 
-This script has been tested with macOS 11.3, Ubuntu 20.04, and Windows 10 20H2.
+This script has been tested with macOS 11.3 (using Python >= 3.7 installed using [Homebrew](https://brew.sh/)), Ubuntu 20.04, and Windows 10 20H2.
 
 ### Finding the Internet Archive item identifier(s)
 
@@ -40,7 +40,7 @@ Usage example:
 
 The above will `download` all files associated with Internet Archive items with identifiers `gov.archives.arc.1155023` and `TourTheInternationalSpaceStation` to folder `space_videos`.
 
-Internet Archive 'collections' (a special type of item that groups other items together, based on a theme) may also be specified as the identifier, using prefix `collection:`, e.g. `collection:nasa`.
+Internet Archive 'collections' (a special type of item that groups other items together, based on a theme) may also be specified as the identifier, using prefix `collection:`, e.g. `collection:nasa`. Each item within the collection will be downloaded in turn.
 
 The available flags can be viewed using: `python3 ia_downloader.py download --help`, and are as follows:
 
@@ -61,7 +61,7 @@ This usage mode provides confirmation that a previous download session using thi
 
 Syntax:
 
-    python3 ia_downloader.py verify hashfile data_folder [flags]
+    python3 ia_downloader.py verify hashfile data_folder [--nopaths]
 
 Usage example:
 
@@ -75,7 +75,7 @@ The available flag can be viewed using: `python3 ia_downloader.py verify --help`
 
 ## Known issues
 
-1. Each Internet Archive item has an `[identifier]_files.xml` file containing Internet Archive metadata. In testing for this file, the hash value of the downloaded file does not always match the value listed in Internet Archive metadata, causing a warning to be generated.
+1. Each Internet Archive item has an `[identifier]_files.xml` file containing Internet Archive metadata. This file is not assessed during verification processes, as in testing it was found that the hash value of the downloaded file does not always match the value listed in Internet Archive metadata.
 2. A [Python bug](https://bugs.python.org/issue38428) may cause issues in Windows when trying to quit the script using `CTRL+C`. A `SIGBREAK` can be sent instead using `CTRL+BREAK`, or by invoking the on-screen keyboard (`WIN+R`, then run `osk.exe`) and using its `Ctrl+ScrLk` keys.
 
 ## Contributing
