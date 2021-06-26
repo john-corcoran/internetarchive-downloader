@@ -1,6 +1,6 @@
 # Internet Archive Downloader
 
-This script uses multithreading and multiprocessing in conjunction with the [Internet Archive Python Library](https://archive.org/services/docs/api/internetarchive/) to provide bulk downloads of files associated with Internet Archive ([archive.org](https://archive.org/)) items, with optional interrupted download resumption and file hash verification.
+This Python script uses multithreading and multiprocessing in conjunction with the [Internet Archive Python Library](https://archive.org/services/docs/api/internetarchive/) to provide bulk downloads of files associated with Internet Archive ([archive.org](https://archive.org/)) items, with optional interrupted download resumption and file hash verification.
 
 ## Getting started
 
@@ -46,9 +46,10 @@ The available flags can be viewed using: `python3 ia_downloader.py download --he
 
 - `-t [int]` or `--threads [int]`: number of download threads (i.e. how many file downloads to perform simultaneously). The maximum is `5`, which is also the default if left unspecified.
 - `-v` or `--verify`: if used, as each download completes, an MD5 hash verification will be performed against the downloaded data and compared against the hash values listed in Internet Archive metadata. This provides confirmation that the file download completed successfully, and is recommended for large or interrupted/resumed file transfers. If you wanted to verify data in this way but forgot to use this flag, you can use the `verify` usage mode (detailed below) after the download completes.
-- `-r` or `--resume`: if used, interrupted file transfers will be restarted where they left off, rather than being started over from scratch. In testing, Internet Archive connections can be unstable, so this is recommended for large file transfers. This is marked as 'experimental' as the download process deviates from the core Internet Archive Python Library, and therefore may break in future updates.
-- `-s [int]` or `--split [int]`: if used, the behaviour of downloads will change - instead of multiple files being downloaded simultaneously, only one file will be downloaded at a time, with each file over 10MB split into separate download threads (number of download threads is specified with this flag); each thread will download a separate portion of the file, and the file will be combined when all download threads complete. This may increase per-file download speeds, but will use more temporary storage space as files are downloaded. As above, this is considered experimental. To avoid overloading Internet Archive servers, only one file will be downloaded at a time if this option is used (i.e. `-t` will be ignored). If using `-r` and the script has been restarted, use the same number of splits passed with this argument as was used during previous script execution. The maximum is `5`; the default is `1` (i.e. no file splitting will be performed).
+- `-r` or `--resume`: if used, interrupted file transfers will be restarted where they left off, rather than being started over from scratch. In testing, Internet Archive connections can be unstable, so this is recommended for large file transfers.
+- `-s [int]` or `--split [int]`: if used, the behaviour of downloads will change - instead of multiple files being downloaded simultaneously, only one file will be downloaded at a time, with each file over 10MB split into separate download threads (number of download threads is specified with this flag); each thread will download a separate portion of the file, and the file will be combined when all download threads complete. This may increase per-file download speeds, but will use more temporary storage space as files are downloaded. To avoid overloading Internet Archive servers, only one file will be downloaded at a time if this option is used (i.e. `-t` will be ignored). If using `-r` and the script has been restarted, use the same number of splits passed with this argument as was used during previous script execution. The maximum is `5`; the default is `1` (i.e. no file splitting will be performed).
 - `-f [str ... str]` or `--filefilters [str ... str]`: one or more (space separated) file name filters; only files with names that contain any of the provided filter strings (case insensitive) will be downloaded. If multiple filters are provided, the search will be an 'OR' (i.e. only one of the provided strings needs to hit). For example, `-f png jpg` will download all files that contain either `png` or `jpg` in the file name. Individual terms can be wrapped in quotation marks.
+- `-c [str] [str]` or `--credentials [str] [str]`: some Internet Archive items contain files that can only be accessed when logged in with an Internet Archive account. An email address and password can be supplied with this argument as two separate strings (email address first, then password - note that passwords containing spaces will need to be wrapped in quotation marks). Note that terminal history on your system may reveal your credentials to other users, and your credentials will be stored in a plaintext file in either `$HOME/.ia` or `$HOME/.config/ia.ini` as per [Internet Archive Python Library guidance](https://archive.org/services/docs/api/internetarchive/api.html#configuration). Credentials will be cached for future uses of this script (i.e. this flag only needs to be used once).
 - `--hashfile [str]`: output path to write file containing hash metadata (as recorded by Internet Archive). If left unspecified, the hash metadata file will be created in the output folder.
 
 Usage example incorporating flags:
@@ -72,6 +73,19 @@ The above will `verify` that the Internet Archive hash metadata (written during 
 The available flag can be viewed using: `python3 ia_downloader.py verify --help`, and is as follows:
 
 - `--nopaths`: if the files have been moved from their original locations, then using this flag will instruct the script to only check that the hash values listed in the Internet Archive metadata reside somewhere in the download folder, rather than additionally checking that they are in the expected relative locations. This should still be fine for most use cases, but would not report on edge cases such as duplicate copies of a file with the same hash value having been deleted.
+
+## Privacy, log data, and uninstallation
+
+This script only shares data with the Internet Archive to facilitate file downloads. No other third party services are communicated with.
+
+Log data is stored by default in folder `ia_downloader_logs` (created in the folder that the script is executed in). These logs capture system details (including Python version and operating system), command line arguments used, and events occurring during script execution. Credentials are not recorded in these logs, but will be retained on the local system in terminal history and in a plaintext file in either `$HOME/.ia` or `$HOME/.config/ia.ini` as per [Internet Archive Python Library guidance](https://archive.org/services/docs/api/internetarchive/api.html#configuration).
+
+Full uninstallation can be achieved by:
+
+1. Deleting the script and any other downloaded files (e.g. the readme and license).
+2. Deleting the logs folder (`ia_downloader_logs` by default).
+3. If desired, removing records of Internet Archive credentials stored in terminal history or in folders listed above.
+4. If desired, removing the Internet Archive Python Library and Python runtime.
 
 ## Known issues
 

@@ -55,7 +55,7 @@ class MsgCounterHandler(logging.Handler):
 
 
 def prepare_logging(
-    datetime_string: str, folder_path: str, identifier: str
+    datetime_string: str, folder_path: str, identifier: str, args: typing.Dict[str, typing.Any]
 ) -> typing.Tuple[logging.Logger, MsgCounterHandler]:
     """Prepare and return logging object to be used throughout script"""
     # INFO events and above will be written to both the console and a log file
@@ -99,7 +99,11 @@ def prepare_logging(
             )
         except:
             pass
-    log.debug("commandline: {}".format(sys.argv))
+    # Sanitise username and passwords if credentials flag is present
+    if "credentials" in args:
+        if args["credentials"] is not None:
+            args["credentials"] = ["***", "***"]
+    log.debug("commandline_args: {}".format(args))
     return log, counter_handler
 
 
@@ -484,13 +488,29 @@ def file_download(
             try:
                 if not resume_flag and chunk_number is None:
                     log.info("Beginning download of '{}'".format(dest_file_name))
-                    internetarchive.download(
-                        identifier,
-                        files=[ia_file_name],
-                        destdir=output_folder,
-                        on_the_fly=True,
-                        silent=True,
-                    )
+                    try:
+                        internetarchive.download(
+                            identifier,
+                            files=[ia_file_name],
+                            destdir=output_folder,
+                            on_the_fly=True,
+                            silent=True,
+                        )
+                    except requests.exceptions.HTTPError as http_error:
+                        status_code = http_error.response.status_code
+                        if status_code == 403:
+                            log.warning(
+                                "403 forbidden error occurred for file '{}' - an account login may"
+                                " be required to access this file (account details can be passed"
+                                " using the '-c' flag)".format(ia_file_name)
+                            )
+                        else:
+                            log.warning(
+                                "{} error status returned for file '{}'".format(
+                                    status_code, ia_file_name
+                                )
+                            )
+                        return
                 else:
                     partial_file_size = 0
                     if os.path.isfile(dest_file_path):
@@ -520,14 +540,30 @@ def file_download(
                     # (We are doing this as internetarchive.download will otherwise delete a
                     # partially-downloaded file if a ConnectionError occurs, meaning we would have
                     # nothing left to try and resume)
-                    response_list = internetarchive.download(
-                        identifier,
-                        files=[ia_file_name],
-                        destdir=output_folder,
-                        on_the_fly=True,
-                        silent=True,
-                        return_responses=True,
-                    )
+                    try:
+                        response_list = internetarchive.download(
+                            identifier,
+                            files=[ia_file_name],
+                            destdir=output_folder,
+                            on_the_fly=True,
+                            silent=True,
+                            return_responses=True,
+                        )
+                    except requests.exceptions.HTTPError as http_error:
+                        status_code = http_error.response.status_code
+                        if status_code == 403:
+                            log.warning(
+                                "403 forbidden error occurred for file '{}' - an account login may"
+                                " be required to access this file (account details can be passed"
+                                " using the '-c' flag)".format(ia_file_name)
+                            )
+                        else:
+                            log.warning(
+                                "{} error status returned for file '{}'".format(
+                                    status_code, ia_file_name
+                                )
+                            )
+                        return
                     response = response_list[0]  # type: requests.Response
                     request = response.request  # type: requests.PreparedRequest
                     headers = request.headers
@@ -1220,6 +1256,16 @@ def main() -> None:
         ),
     )
     download_parser.add_argument(
+        "-c",
+        "--credentials",
+        type=str,
+        nargs=2,
+        help=(
+            "Email address and password (as separate strings) for Internet Archive account"
+            " (required for download of some Internet Archive items)"
+        ),
+    )
+    download_parser.add_argument(
         "--hashfile",
         type=str,
         help=(
@@ -1254,7 +1300,9 @@ def main() -> None:
 
     # Set up logging
     pathlib.Path(args.logfolder).mkdir(parents=True, exist_ok=True)
-    log, counter_handler = prepare_logging(datetime_string, args.logfolder, "ia_downloader")
+    log, counter_handler = prepare_logging(
+        datetime_string, args.logfolder, "ia_downloader", dict(vars(args))
+    )
     log.info(
         "Internet Archive is a non-profit organisation that is experiencing unprecedented service"
         " demand. Please consider making a donation: https://archive.org/donate"
@@ -1263,6 +1311,16 @@ def main() -> None:
 
     try:
         if args.command == "download":
+            if args.credentials:
+                try:
+                    internetarchive.configure(args.credentials[0], args.credentials[1])
+                except internetarchive.exceptions.AuthenticationError:
+                    log.error(
+                        "Authentication error raised for supplied email address and password -"
+                        " check these were entered correctly (if the password has spaces, it must"
+                        " be wrapped in quotation marks)"
+                    )
+                    return
             if args.threads > 5 or args.split > 5:
                 log.info(
                     "Reducing download threads to 5, to optimise script performance and reduce"
