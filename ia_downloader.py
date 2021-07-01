@@ -958,6 +958,19 @@ def download(
                 try:
                     # Get Internet Archive metadata for the provided identifier
                     item = internetarchive.get_item(identifier)
+                    if "item_last_updated" in item.item_metadata:
+                        item_updated_time = datetime.datetime.fromtimestamp(
+                            int(item.item_metadata["item_last_updated"])
+                        )
+                        if item_updated_time > (
+                            datetime.datetime.now() - datetime.timedelta(weeks=1)
+                        ):
+                            log.warning(
+                                "Internet Archive item '{}' was updated within the last week (last"
+                                " updated on {}) - verification/corruption issues may occur if"
+                                " files are being updated by the uploader. If such errors occur when resuming a download, recommend using the '--cacherefresh' flag"
+                                .format(identifier, item_updated_time.strftime("%Y-%m-%d %H:%M:%S"))
+                            )
                 except requests.exceptions.ConnectionError:
                     if connection_retry_counter < MAX_RETRIES:
                         log.info(
