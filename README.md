@@ -50,11 +50,12 @@ The available flags can be viewed using: `python3 ia_downloader.py download --he
 - `-s [int]` or `--split [int]`: if used, the behaviour of downloads will change - instead of multiple files being downloaded simultaneously, only one file will be downloaded at a time, with each file over 10MB split into separate download threads (number of download threads is specified with this flag); each thread will download a separate portion of the file, and the file will be combined when all download threads complete. This may increase per-file download speeds, but will use more temporary storage space as files are downloaded. To avoid overloading Internet Archive servers, only one file will be downloaded at a time if this option is used (i.e. `-t` will be ignored). If using `-r` and the script has been restarted, use the same number of splits passed with this argument as was used during previous script execution. The maximum is `5`; the default is `1` (i.e. no file splitting will be performed).
 - `-f [str ... str]` or `--filefilters [str ... str]`: one or more (space separated) file name filters; only files with names that contain any of the provided filter strings (case insensitive) will be downloaded. If multiple filters are provided, the search will be an 'OR' (i.e. only one of the provided strings needs to hit). For example, `-f png jpg` will download all files that contain either `png` or `jpg` in the file name. Individual terms can be wrapped in quotation marks.
 - `-c [str] [str]` or `--credentials [str] [str]`: some Internet Archive items contain files that can only be accessed when logged in with an Internet Archive account. An email address and password can be supplied with this argument as two separate strings (email address first, then password - note that passwords containing spaces will need to be wrapped in quotation marks). Note that terminal history on your system may reveal your credentials to other users, and your credentials will be stored in a plaintext file in either `$HOME/.ia` or `$HOME/.config/ia.ini` as per [Internet Archive Python Library guidance](https://archive.org/services/docs/api/internetarchive/api.html#configuration). Credentials will be cached for future uses of this script (i.e. this flag only needs to be used once).
-- `--hashfile [str]`: output path to write file containing hash metadata (as recorded by Internet Archive). If left unspecified, the hash metadata file will be created in the output folder.
+- `--hashfile [str]`: output path to write file containing hash metadata (as recorded by Internet Archive). If left unspecified, the hash metadata file will be created in the cache within the logs folder.
+- `--cacherefresh`: metadata for Internet Archive items and collections will be cached in the log folder and used if a download is resumed or restarted, or if the `verify` mode is used. When downloading, metadata will be refreshed if the data in the cache is over one week old, or if this flag is used.
 
 Usage example incorporating flags:
 
-    python3 ia_downloader.py download gov.archives.arc.1155023 space_videos -t 3 -v -r -f mpeg mp4 --hashfile ia_metadata.txt
+    python3 ia_downloader.py download gov.archives.arc.1155023 space_videos -t 3 -v -r -f mpeg mp4 -c user@email.com Passw0rd --hashfile ia_metadata.txt
 
 ### Verify
 
@@ -62,23 +63,30 @@ This usage mode provides confirmation that a previous download session using thi
 
 Syntax:
 
-    python3 ia_downloader.py verify hashfile data_folder [--nopaths]
+    python3 ia_downloader.py verify data_folder [data_folder ...] [flags]
 
 Usage example:
 
-    python3 ia_downloader.py verify space_videos/20210601_155025_ia_downloader_hashes.txt space_videos
+    python3 ia_downloader.py verify space_videos
 
-The above will `verify` that the Internet Archive hash metadata (written during a previous download session) in file `space_videos/20210601_155025_ia_downloader_hashes.txt` aligns with hash values that will be calculated by the script for the files as previously downloaded in folder `space_videos`.
+The above will `verify` that the Internet Archive hash metadata (cached during a previous download session and stored in the logs folder) aligns with hash values that will be calculated by the script for the files as previously downloaded in folder `space_videos`.
 
-The available flag can be viewed using: `python3 ia_downloader.py verify --help`, and is as follows:
+The available flags can be viewed using: `python3 ia_downloader.py verify --help`, and are as follows:
 
-- `--nopaths`: if the files have been moved from their original locations, then using this flag will instruct the script to only check that the hash values listed in the Internet Archive metadata reside somewhere in the download folder, rather than additionally checking that they are in the expected relative locations. This should still be fine for most use cases, but would not report on edge cases such as duplicate copies of a file with the same hash value having been deleted.
+- `-i [str ... str]` or `--identifiers [str ... str]`: if only certain Internet Archive item folders are to be verified in your data folder, one or more may be specified with this flag (space separated).
+- `--hashfile [str]`: by default, the verification process will be performed using metadata cached during previous script execution, as stored in the logs folder. This flag may be used to specify an alternate location for the hash metadata file to be used during verification.
+- `-f [str ... str]` or `--filefilters [str ... str]`: one or more (space separated) file name filters; use this flag to replicate any file filters specified during the original download, so that warnings are not generated for files that are intentionally filtered from the original Internet Archive item.
+- `--nopaths`: if the files have been moved from their original locations, then using this flag will instruct the script to only check that the hash values listed in the Internet Archive metadata reside somewhere in the download folder, rather than additionally checking that they are in the expected relative locations. This should still be fine for most use cases, but would not report on edge cases such as duplicate copies of a file with the same hash value having been deleted. It is likely that `--hashfile` will need to be used with this option, as if folder structure for the downloaded files has changed, it will not be possible to find associated metadata within the cache.
+
+Usage example incorporating flags:
+
+    python3 ia_downloader.py verify space_videos -i gov.archives.arc.1155023 --hashfile space_videos/20210601_155025_ia_downloader_hashes.txt -f mpeg mp4
 
 ## Privacy, log data, and uninstallation
 
 This script only shares data with the Internet Archive to facilitate file downloads. No other third party services are communicated with.
 
-Log data is stored by default in folder `ia_downloader_logs` (created in the folder that the script is executed in). These logs capture system details (including Python version and operating system), command line arguments used, and events occurring during script execution. Credentials are not recorded in these logs, but will be retained on the local system in terminal history and in a plaintext file in either `$HOME/.ia` or `$HOME/.config/ia.ini` as per [Internet Archive Python Library guidance](https://archive.org/services/docs/api/internetarchive/api.html#configuration).
+Log data and cached Internet Archive metadata is stored by default in folder `ia_downloader_logs` (created in the folder that the script is executed in). Logs capture system details (including Python version and operating system), command line arguments used, and events occurring during script execution. Credentials are not recorded in these logs, but will be retained on the local system in terminal history and in a plaintext file in either `$HOME/.ia` or `$HOME/.config/ia.ini` as per [Internet Archive Python Library guidance](https://archive.org/services/docs/api/internetarchive/api.html#configuration).
 
 Full uninstallation can be achieved by:
 
@@ -90,7 +98,8 @@ Full uninstallation can be achieved by:
 ## Known issues
 
 1. Each Internet Archive item has an `[identifier]_files.xml` file containing Internet Archive metadata. This file is not assessed during verification processes, as in testing it was found that the hash value of the downloaded file does not always match the value listed in Internet Archive metadata.
-2. A [Python bug](https://bugs.python.org/issue38428) may cause issues in Windows when trying to quit the script using `CTRL+C`. A `SIGBREAK` can be sent instead using `CTRL+BREAK`, or by invoking the on-screen keyboard (`WIN+R`, then run `osk.exe`) and using its `Ctrl+ScrLk` keys.
+2. Regular disconnects may occur while downloading files from some Internet Archive items. This may be due to load on Internet Archive servers for popular items. Use of the `-r` flag will allow files to be resumed if disconnects occur.
+3. A [Python bug](https://bugs.python.org/issue38428) may cause issues in Windows when trying to quit the script using `CTRL+C`. A `SIGBREAK` can be sent instead using `CTRL+BREAK`, or by invoking the on-screen keyboard (`WIN+R`, then run `osk.exe`) and using its `Ctrl+ScrLk` keys.
 
 ## Contributing
 

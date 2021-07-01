@@ -5,6 +5,7 @@
 import argparse
 import datetime
 import hashlib
+import io
 import logging
 import multiprocessing
 import multiprocessing.pool
@@ -62,6 +63,9 @@ def prepare_logging(
     # DEBUG events and above will be written only to a (separate) log file
     log = logging.getLogger(__name__)
     log.setLevel(logging.DEBUG)
+    # 'Quiet' logger for when quiet flag used in functions
+    quiet = logging.getLogger("quiet")
+    quiet.setLevel(logging.ERROR)
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     debug_log = logging.FileHandler(
         os.path.join(folder_path, "{}_{}_debug.log".format(datetime_string, identifier))
@@ -130,21 +134,27 @@ def bytes_filesize_to_readable_str(bytes_filesize: int) -> str:
 def file_paths_in_folder(folder_path: str) -> typing.List[str]:
     """Return sorted list of paths of files at a directory (and its subdirectories)"""
     file_paths = []
-    for root, dirs, file_names in os.walk(folder_path):
+    for root, _, file_names in os.walk(folder_path):
         for name in file_names:
             file_paths.append(os.path.join(root, name))
     return sorted(file_paths)
 
 
 def get_metadata_from_hashfile(
-    hash_file_path: str, hash_flag: bool, identifier_filter: str = None
+    hash_file_path: str,
+    hash_flag: bool,
+    identifier_filter: typing.Optional[typing.List[str]] = None,
+    file_filters: typing.Optional[typing.List[str]] = None,
 ) -> typing.Dict[str, str]:
     """Return dict of file paths and associated metadata parsed from IA hash metadata CSV"""
     results = {}  # type: typing.Dict[str, str]
     with open(hash_file_path, "r", encoding="utf-8") as file_handler:
         for line in file_handler:
-            identifier, file_path, size, md5 = line.strip().split("|")
-            if identifier_filter is None or identifier == identifier_filter:
+            identifier, file_path, size, md5, mtime = line.strip().split("|")
+            if file_filters is not None:
+                if not any(substring.lower() in file_path.lower() for substring in file_filters):
+                    continue
+            if identifier_filter is None or identifier in identifier_filter:
                 if hash_flag:
                     results[
                         os.path.join(identifier, os.path.normpath(file_path))
@@ -314,7 +324,7 @@ def file_download(
             initial_file_size = os.path.getsize(dest_file_path)
             if initial_file_size == expected_file_size:
                 log.debug(
-                    "'{}' will be skipped as file with expected file size already present at '{}'"
+                    "'{}' - will be skipped as file with expected file size already present at '{}'"
                     .format(dest_file_name, dest_file_path)
                 )
                 return
@@ -322,7 +332,7 @@ def file_download(
                 if initial_file_size < expected_file_size:
                     if resume_flag:
                         log.info(
-                            "'{}' exists as downloaded file '{}' but file size indicates download"
+                            "'{}' - exists as downloaded file '{}' but file size indicates download"
                             " was not completed; will be resumed ({:.1%} remaining)".format(
                                 dest_file_name,
                                 dest_file_path,
@@ -331,22 +341,22 @@ def file_download(
                         )
                     else:
                         log.info(
-                            "'{}' exists as downloaded file '{}' but file size indicates download"
+                            "'{}' - exists as downloaded file '{}' but file size indicates download"
                             " was not completed; will be redownloaded".format(
                                 dest_file_name, dest_file_path
                             )
                         )
                 else:
                     log.warning(
-                        "'{}' exists as downloaded file '{}', but with a larger file size than"
+                        "'{}' - exists as downloaded file '{}', but with a larger file size than"
                         " expected - was the file modified (either locally or on Internet Archive)"
                         " since it was downloaded?".format(dest_file_name, dest_file_path)
                     )
                     return
         else:
             log.info(
-                "'{}' exists as downloaded file '{}' but file size metadata unavailable from IA to"
-                " confirm whether file size is as expected; will be redownloaded".format(
+                "'{}' - exists as downloaded file '{}' but file size metadata unavailable from IA"
+                " to confirm whether file size is as expected; will be redownloaded".format(
                     dest_file_name, dest_file_path
                 )
             )
@@ -373,20 +383,20 @@ def file_download(
 
         if new_response.status_code == 206:
             log.debug(
-                "'{}' returns a 206 status when requesting a Range - can therefore split download"
+                "'{}' - returns a 206 status when requesting a Range - can therefore split download"
                 .format(ia_file_name)
             )
         elif new_response.status_code == 200:
             log.debug(
-                "'{}' returns a 200 status when requesting a Range - download will not be split"
+                "'{}' - returns a 200 status when requesting a Range - download will not be split"
                 .format(ia_file_name)
             )
             split_count = 1
         else:
             log.info(
-                "Unexpected status code {} returned for file '{}' when testing file splitting -"
+                "'{}' - unexpected status code {} returned when testing file splitting -"
                 " download will be attempted without splitting".format(
-                    new_response.status_code, ia_file_name
+                    ia_file_name, new_response.status_code
                 )
             )
             split_count = 1
@@ -427,7 +437,7 @@ def file_download(
 
         with multiprocessing.pool.ThreadPool(split_count) as download_pool:
             # Chunksize 1 used to ensure downloads occur in filename order
-            log.info("'{}' will be downloaded in {} parts".format(ia_file_name, split_count))
+            log.info("'{}' - will be downloaded in {} parts".format(ia_file_name, split_count))
             download_pool.map(file_download, download_queue, chunksize=1)
             download_pool.close()
             download_pool.join()
@@ -440,14 +450,14 @@ def file_download(
 
             if not os.path.isfile(chunk_file_path):
                 log.warning(
-                    "'{}' chunk {} (sub-file '{}') cannot be found".format(
+                    "'{}' - chunk {} (sub-file '{}') cannot be found".format(
                         ia_file_name, chunk_counter, chunk_file_path
                     )
                 )
                 failed_indicator = True
             elif os.path.getsize(chunk_file_path) != chunk_sizes[chunk_counter]:
                 log.warning(
-                    "'{}' chunk {} (sub-file '{}') is not the expected size (expected size {},"
+                    "'{}' - chunk {} (sub-file '{}') is not the expected size (expected size {},"
                     " actual size {})".format(
                         ia_file_name,
                         chunk_counter,
@@ -460,7 +470,7 @@ def file_download(
 
         if failed_indicator:
             log.warning(
-                "Error occurred with file chunks for file {} - file could not be reconstructed"
+                "'{}' - error occurred with file chunks - file could not be reconstructed"
                 " and has therefore not been downloaded successfully".format(ia_file_name)
             )
         else:
@@ -487,7 +497,7 @@ def file_download(
         while True:
             try:
                 if not resume_flag and chunk_number is None:
-                    log.info("Beginning download of '{}'".format(dest_file_name))
+                    log.info("'{}' - beginning download".format(dest_file_name))
                     try:
                         internetarchive.download(
                             identifier,
@@ -500,14 +510,14 @@ def file_download(
                         status_code = http_error.response.status_code
                         if status_code == 403:
                             log.warning(
-                                "403 forbidden error occurred for file '{}' - an account login may"
+                                "'{}' - 403 forbidden error occurred - an account login may"
                                 " be required to access this file (account details can be passed"
                                 " using the '-c' flag)".format(ia_file_name)
                             )
                         else:
                             log.warning(
-                                "{} error status returned for file '{}'".format(
-                                    status_code, ia_file_name
+                                "'{}' - {} error status returned when attempting download".format(
+                                    ia_file_name, status_code
                                 )
                             )
                         return
@@ -521,14 +531,14 @@ def file_download(
                             # will also give different hash values per download - so would be
                             # wasting time to calc hash as there'll always be a mismatch requiring
                             # a full re-download)
-                            log.info("Redownloading '{}'".format(dest_file_name))
+                            log.info("'{}' - beginning re-download".format(dest_file_name))
                             file_write_mode = "wb"
                         elif resume_flag:
-                            log.info("Resuming download of '{}'".format(dest_file_name))
+                            log.info("'{}' - resuming download".format(dest_file_name))
                             file_write_mode = "ab"
                             partial_file_size = os.path.getsize(dest_file_path)
                     else:
-                        log.info("Beginning download of '{}'".format(dest_file_name))
+                        log.info("'{}' - beginning download".format(dest_file_name))
                         file_write_mode = "wb"
                         pathlib.Path(os.path.dirname(dest_file_path)).mkdir(
                             parents=True, exist_ok=True
@@ -553,15 +563,13 @@ def file_download(
                         status_code = http_error.response.status_code
                         if status_code == 403:
                             log.warning(
-                                "403 forbidden error occurred for file '{}' - an account login may"
+                                "'{}' - 403 forbidden error occurred - an account login may"
                                 " be required to access this file (account details can be passed"
                                 " using the '-c' flag)".format(ia_file_name)
                             )
                         else:
                             log.warning(
-                                "{} error status returned for file '{}'".format(
-                                    status_code, ia_file_name
-                                )
+                                "'{}' - {} error status returned".format(ia_file_name, status_code)
                             )
                         return
                     response = response_list[0]  # type: requests.Response
@@ -589,7 +597,7 @@ def file_download(
                             updated_bytes_range[0], updated_bytes_range[1]
                         )
                         log.debug(
-                            "Range to be requested for IA file '{}' (being downloaded as file"
+                            "'{}' - range to be requested (being downloaded as file"
                             " '{}') is {}-{}".format(
                                 ia_file_name,
                                 dest_file_name,
@@ -603,8 +611,9 @@ def file_download(
                     )
 
                     log.debug(
-                        "{} status for request for IA file '{}' (being downloaded as file '{}')"
-                        .format(new_response.status_code, ia_file_name, dest_file_name)
+                        "'{}' - {} status for request (being downloaded as file '{}')".format(
+                            ia_file_name, new_response.status_code, dest_file_name
+                        )
                     )
 
                     if new_response.status_code == 200 or new_response.status_code == 206:
@@ -685,7 +694,7 @@ def file_download(
                     )
                 else:
                     log.warning(
-                        "'{}' download timed out {} times; this file has not been downloaded"
+                        "'{}' - download timed out {} times; this file has not been downloaded"
                         " successfully".format(dest_file_name, MAX_RETRIES)
                     )
                     return
@@ -748,7 +757,7 @@ def file_download(
     # amount of data downloaded in this session, for accurate stats on how long it took to download
     downloaded_data_in_mb = ((expected_file_size - initial_file_size) / 1024) / 1024
     log.info(
-        "'{}' download completed in {}{}".format(
+        "'{}' - download completed in {}{}".format(
             dest_file_name,
             datetime.timedelta(seconds=round(int(duration.total_seconds()))),
             " ({:.2f}MB per minute)".format(downloaded_data_in_mb / duration_in_minutes)
@@ -771,17 +780,20 @@ def file_download(
 def download(
     identifier: str,
     output_folder: str,
-    hash_file: str,
+    hash_file: typing.Optional[io.TextIOWrapper],
     thread_count: int,
     resume_flag: bool,
     verify_flag: bool,
     split_count: int,
     file_filters: typing.Optional[typing.List[str]],
+    cache_parent_folder: str,
+    cache_refresh: bool,
 ) -> None:
     """Download files associated with an Internet Archive identifier"""
     log = logging.getLogger(__name__)
     PROCESSES = multiprocessing.cpu_count() - 1
 
+    # Create output folder if it doesn't already exist
     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
 
     log.info("'{}' contents will be downloaded to '{}'".format(identifier, output_folder))
@@ -794,48 +806,94 @@ def download(
     # If the identifier is a collection, get a list of identifiers associated with the collection
     if identifier.startswith("collection:"):
         collection_name = identifier[11:]
-        while True:
-            try:
-                search_results = internetarchive.search_items(identifier)
-                for search_result in search_results:
-                    identifiers.append(search_result["identifier"])
-                if len(identifiers) > 0:
-                    log.info(
-                        "Internet Archive collection '{}' contains {} individual Internet Archive"
-                        " items; each will be downloaded".format(collection_name, len(identifiers))
-                    )
-                else:
-                    log.warning(
-                        "No items associated with collection '{}' were identified - was the"
-                        " collection name entered correctly?".format(collection_name)
-                    )
-                    return
-            except requests.exceptions.ConnectionError:
-                if connection_retry_counter < MAX_RETRIES:
-                    log.info(
-                        "ConnectionError occurred when attempting to connect to Internet Archive to"
-                        " get info for collection '{}' - is internet connection active? Waiting {}"
-                        " minutes before retrying (will retry {} more times)".format(
-                            collection_name,
-                            int(connection_wait_timer / 60),
-                            MAX_RETRIES - connection_retry_counter,
+        # See if the collection exists in the cache
+        cache_folder = os.path.join(cache_parent_folder, "collection-{}".format(collection_name))
+        if not cache_refresh and os.path.isdir(cache_folder):
+            cache_files = sorted(
+                [
+                    f.path
+                    for f in os.scandir(cache_folder)
+                    if f.is_file() and f.name.endswith("items.txt")
+                ]
+            )
+            if len(cache_files) > 0:
+                cache_file = cache_files[-1]
+                # Get datetime from filename
+                datetime_str = "_".join(os.path.basename(cache_file).split("_", 2)[:2])
+                file_datetime = datetime.datetime.strptime(datetime_str, "%Y%m%d_%H%M%S")
+                now_datetime = datetime.datetime.now()
+                if now_datetime - datetime.timedelta(weeks=1) <= file_datetime <= now_datetime:
+                    log.debug(
+                        "Cached data from {} will be used for collection '{}'".format(
+                            datetime_str, collection_name
                         )
                     )
-                    time.sleep(connection_wait_timer)
-                    connection_retry_counter += 1
-                    connection_wait_timer *= (
-                        2  # Add some delay for each retry in case connection issue is ongoing
-                    )
+                    with open(cache_file, "r") as file_handler:
+                        for line in file_handler:
+                            identifiers.append(line.strip())
+        if len(identifiers) == 0:
+            while True:
+                try:
+                    search_results = internetarchive.search_items(identifier)
+                    for search_result in search_results:
+                        identifiers.append(search_result["identifier"])
+                    if len(identifiers) > 0:
+                        log.info(
+                            "Internet Archive collection '{}' contains {} individual Internet"
+                            " Archive items; each will be downloaded".format(
+                                collection_name, len(identifiers)
+                            )
+                        )
+                        # Create cache folder for collection if it doesn't already exist
+                        pathlib.Path(cache_folder).mkdir(parents=True, exist_ok=True)
+
+                        # Write collection's identifiers to metadata file
+                        with open(
+                            os.path.join(
+                                cache_folder,
+                                "{}_{}_items.txt".format(
+                                    datetime.datetime.now().strftime("%Y%m%d_%H%M%S"),
+                                    collection_name,
+                                ),
+                            ),
+                            "w",
+                            encoding="utf-8",
+                        ) as file_handler:
+                            for identifier in identifiers:
+                                file_handler.write("{}\n".format(identifier))
+                    else:
+                        log.warning(
+                            "No items associated with collection '{}' were identified - was the"
+                            " collection name entered correctly?".format(collection_name)
+                        )
+                        return
+                except requests.exceptions.ConnectionError:
+                    if connection_retry_counter < MAX_RETRIES:
+                        log.info(
+                            "ConnectionError occurred when attempting to connect to Internet"
+                            " Archive to get info for collection '{}' - is internet connection"
+                            " active? Waiting {} minutes before retrying (will retry {} more times)"
+                            .format(
+                                collection_name,
+                                int(connection_wait_timer / 60),
+                                MAX_RETRIES - connection_retry_counter,
+                            )
+                        )
+                        time.sleep(connection_wait_timer)
+                        connection_retry_counter += 1
+                        connection_wait_timer *= (
+                            2  # Add some delay for each retry in case connection issue is ongoing
+                        )
+                    else:
+                        log.warning(
+                            "ConnectionError persisted when attempting to connect to Internet"
+                            " Archive - is internet connection active? Download of collection '{}'"
+                            " has failed".format(collection_name)
+                        )
+                        return
+                # If no further errors, break from the True loop
                 else:
-                    log.warning(
-                        "ConnectionError persisted when attempting to connect to Internet Archive -"
-                        " is internet connection active? Download of collection '{}' has failed"
-                        .format(collection_name)
-                    )
-                    return
-            # If no further errors, break from the True loop
-            else:
-                break
+                    break
     else:
         identifiers = [identifier]
 
@@ -845,9 +903,57 @@ def download(
     if verify_flag:
         hash_pool = multiprocessing.Pool(PROCESSES, initializer=hash_pool_initializer)
 
-    with open(hash_file, "a") as file_handler:
-        # Iterate the identifiers list (will only have one iteration unless a collection was passed)
-        for identifier in identifiers:
+    # Iterate the identifiers list (will only have one iteration unless a collection was passed)
+    skipped_identifiers = []
+    for identifier in identifiers:
+        # See if the collection exists in the cache
+        cache_folder = os.path.join(cache_parent_folder, identifier)
+        item = None
+
+        class CacheDict:
+            """Using this simply to allow for a custom attribute (item_metadata) if we use cache"""
+
+        if not cache_refresh and os.path.isdir(cache_folder):
+            cache_files = sorted(
+                [
+                    f.path
+                    for f in os.scandir(cache_folder)
+                    if f.is_file() and f.name.endswith("metadata.txt")
+                ]
+            )
+            if len(cache_files) > 0:
+                cache_file = cache_files[-1]
+                # Get datetime from filename
+                datetime_str = "_".join(os.path.basename(cache_file).split("_", 2)[:2])
+                file_datetime = datetime.datetime.strptime(datetime_str, "%Y%m%d_%H%M%S")
+                now_datetime = datetime.datetime.now()
+                if now_datetime - datetime.timedelta(weeks=1) <= file_datetime <= now_datetime:
+                    log.debug(
+                        "Cached data from {} will be used for item '{}'".format(
+                            datetime_str, identifier
+                        )
+                    )
+                    item = CacheDict()
+                    item.item_metadata = {}
+                    item.item_metadata["files"] = []
+                    with open(cache_file, "r") as file_handler:
+                        try:
+                            for line in file_handler:
+                                _, file_path, size, md5, mtime = line.strip().split("|")
+                                item_dict = {}
+                                item_dict["name"] = file_path
+                                item_dict["size"] = size
+                                item_dict["md5"] = md5
+                                item_dict["mtime"] = mtime
+                                item.item_metadata["files"].append(item_dict)
+                        except ValueError:
+                            log.info(
+                                "Cache file '{}' does not match expected format - cache data will"
+                                " be redownloaded".format(cache_file)
+                            )
+                            item = None
+
+        if item is None:
             connection_retry_counter = 0
             connection_wait_timer = 600
             while True:
@@ -882,115 +988,175 @@ def download(
                 else:
                     break
 
-            # Try the next identifier in the list if we've not been able to get info for this one
-            if item is None:
-                continue
+        # Try the next identifier in the list if we've not been able to get info for this one
+        if item is None:
+            continue
 
-            # Write metadata for files associated with IA identifier to a file, and populate
-            # download_queue with this metadata
-            item_file_count = 0
-            item_total_size = 0
-            item_filtered_files_size = 0
-            if "files" in item.item_metadata:
-                download_queue = []
-                for file in item.item_metadata["files"]:
-                    item_file_count += 1
-                    if "size" in file:
-                        item_total_size += int(file["size"])
-                    if file_filters is not None:
-                        if not any(
-                            substring.lower() in file["name"].lower() for substring in file_filters
-                        ):
-                            continue
-                    # In testing it seems that the '[identifier]_files.xml' file will not have size
-                    # or mtime data; the below will set a default size/mtime of '-1' where needed
-                    if "size" not in file:
-                        file["size"] = -1
-                        log.debug("'{}' has no size metadata".format(file["name"]))
-                    else:
-                        item_filtered_files_size += int(file["size"])
-                    if "mtime" not in file:
-                        file["mtime"] = -1
-                        log.debug("'{}' has no mtime metadata".format(file["name"]))
-                    file_handler.write(
-                        "{}|{}|{}|{}\n".format(identifier, file["name"], file["size"], file["md5"])
-                    )
-                    download_queue.append(
-                        (
-                            identifier,
-                            file["name"],
-                            int(file["size"]),
-                            file["md5"],
-                            int(file["mtime"]),
-                            output_folder,
-                            hash_pool,
-                            resume_flag,
-                            split_count,
-                            None,  # bytes_range
-                            None,  # chunk_number
-                        )
-                    )
-                if file_filters is not None:
-                    if len(download_queue) > 0:
-                        log.info(
-                            "{} files ({}) match file filter(s) '{}' (case insensitive) and will be"
-                            " downloaded (out of a total of {} files ({}) available); file metadata"
-                            " written to '{}'".format(
-                                len(download_queue),
-                                bytes_filesize_to_readable_str(item_filtered_files_size),
-                                " ".join(file_filters),
-                                item_file_count,
-                                bytes_filesize_to_readable_str(item_total_size),
-                                hash_file,
-                            )
-                        )
-                    else:
-                        log.warning(
-                            "No files match the filter(s) '{}' - no downloads will be performed"
-                            .format(" ".join(file_filters))
-                        )
-                        continue
+        # Write metadata for files associated with IA identifier to a file, and populate
+        # download_queue with this metadata
+        item_file_count = 0
+        item_total_size = 0
+        item_filtered_files_size = 0
+        if "files" in item.item_metadata:
+            # Create cache folder for item if it doesn't already exist
+            pathlib.Path(cache_folder).mkdir(parents=True, exist_ok=True)
+
+            download_queue = []
+            # If the 'item' is our custom CacheDict, then we built it from cache - so don't need to
+            # write another metadata file
+            if not isinstance(item, CacheDict):
+                cache_file_handler = open(
+                    os.path.join(
+                        cache_folder,
+                        "{}_{}_metadata.txt".format(
+                            datetime.datetime.now().strftime("%Y%m%d_%H%M%S"), identifier
+                        ),
+                    ),
+                    "w",
+                )
+            for file in item.item_metadata["files"]:
+                item_file_count += 1
+                if "size" in file:
+                    item_total_size += int(file["size"])
+                # In testing it seems that the '[identifier]_files.xml' file will not have size
+                # or mtime data; the below will set a default size/mtime of '-1' where needed
+                if "size" not in file:
+                    file["size"] = -1
+                    log.debug("'{}' has no size metadata".format(file["name"]))
                 else:
-                    log.info(
-                        "{} files ({}) will be downloaded for item '{}'; file metadata written to"
-                        " '{}'".format(
-                            len(download_queue),
-                            bytes_filesize_to_readable_str(item_total_size),
-                            identifier,
-                            hash_file,
-                        )
+                    item_filtered_files_size += int(file["size"])
+                if "mtime" not in file:
+                    file["mtime"] = -1
+                    log.debug("'{}' has no mtime metadata".format(file["name"]))
+                log_write_str = "{}|{}|{}|{}|{}\n".format(
+                    identifier, file["name"], file["size"], file["md5"], file["mtime"]
+                )
+                if not isinstance(item, CacheDict):
+                    cache_file_handler.write(log_write_str)
+                if file_filters is not None:
+                    if not any(
+                        substring.lower() in file["name"].lower() for substring in file_filters
+                    ):
+                        continue
+                if hash_file is not None:
+                    hash_file.write(log_write_str)
+
+                download_queue.append(
+                    (
+                        identifier,
+                        file["name"],
+                        int(file["size"]),
+                        file["md5"],
+                        int(file["mtime"]),
+                        output_folder,
+                        hash_pool,
+                        resume_flag,
+                        split_count,
+                        None,  # bytes_range
+                        None,  # chunk_number
                     )
+                )
 
-                # Running under context management here lets the user ctrl+c out and not get a
-                # "ResourceWarning: unclosed running multiprocessing pool
-                # <multiprocessing.pool.ThreadPool ..." error
-                with multiprocessing.pool.ThreadPool(thread_count) as download_pool:
-                    # Chunksize 1 used to ensure downloads occur in filename order
-                    download_pool.map(file_download, download_queue, chunksize=1)
-                    log.debug("Waiting for download pool to complete")
-                    download_pool.close()
-                    download_pool.join()  # Blocks until download threads are complete
+            if not isinstance(item, CacheDict):
+                cache_file_handler.close()
 
-                # Do a 'basic' verification of data (just checking file sizes and paths, not hash
-                # values) - this is separate to hash checks that will be performed as downloads
-                # complete if the user has opted to '--verify'
-                log.info("Download phase complete for item '{}'".format(identifier))
-                # Ensure hash file is written to disk to use in verify function
-                file_handler.flush()
-                os.fsync(file_handler.fileno())
-                verify(
-                    hash_file=hash_file,
-                    data_folder=output_folder,
+            # Check if the output folder already seems to have all the files we expect
+            # Check if files in download queue equal files in folder
+            if len(file_paths_in_folder(os.path.join(output_folder, identifier))) > 0:
+                size_verification = verify(
+                    hash_file=None,
+                    data_folders=[output_folder],
                     no_paths_flag=False,
                     hash_flag=False,
-                    identifier=identifier,
+                    cache_parent_folder=cache_parent_folder,
+                    identifiers=[identifier],
+                    file_filters=file_filters,
+                    quiet=True,
+                )
+                if size_verification:
+                    if len(identifiers) == 1:
+                        log.info(
+                            "'{}' appears to have been fully downloaded in folder '{}' - skipping"
+                            .format(identifier, output_folder)
+                        )
+                        return
+                    else:
+                        log.info(
+                            "'{}' within collection '{}' appears to have been fully downloaded in"
+                            " folder '{}' - skipping".format(
+                                identifier, collection_name, output_folder
+                            )
+                        )
+                        skipped_identifiers.append(identifier)
+                        continue
+
+            if len(skipped_identifiers) > 0:
+                log.info(
+                    "Resuming download of collection '{}' from item '{}'".format(
+                        collection_name, identifier
+                    )
                 )
 
+            if file_filters is not None:
+                if len(download_queue) > 0:
+                    log.info(
+                        "{} files ({}) match file filter(s) '{}' (case insensitive) and will be"
+                        " downloaded (out of a total of {} files ({}) available)".format(
+                            len(download_queue),
+                            bytes_filesize_to_readable_str(item_filtered_files_size),
+                            " ".join(file_filters),
+                            item_file_count,
+                            bytes_filesize_to_readable_str(item_total_size),
+                        )
+                    )
+                else:
+                    log.info(
+                        "No files match the filter(s) '{}' in item '{}' - no downloads will be"
+                        " performed".format(" ".join(file_filters), identifier)
+                    )
+                    continue
             else:
-                log.warning(
-                    "No files found associated with Internet Archive identifier '{}' (check that"
-                    " the correct identifier has been entered)".format(identifier)
+                log.info(
+                    "'{}' contains {} files ({})".format(
+                        identifier,
+                        len(download_queue),
+                        bytes_filesize_to_readable_str(item_total_size),
+                    )
                 )
+
+            # Running under context management here lets the user ctrl+c out and not get a
+            # "ResourceWarning: unclosed running multiprocessing pool
+            # <multiprocessing.pool.ThreadPool ..." error
+            with multiprocessing.pool.ThreadPool(thread_count) as download_pool:
+                # Chunksize 1 used to ensure downloads occur in filename order
+                download_pool.map(file_download, download_queue, chunksize=1)
+                log.debug("Waiting for download pool to complete")
+                download_pool.close()
+                download_pool.join()  # Blocks until download threads are complete
+
+            # Do a 'basic' verification of data (just checking file sizes and paths, not hash
+            # values) - this is separate to hash checks that will be performed as downloads
+            # complete if the user has opted to '--verify'
+            log.info("Download phase complete for item '{}'".format(identifier))
+            # Ensure hash file is written to disk to use in verify function
+            if hash_file is not None:
+                hash_file.flush()
+                os.fsync(hash_file.fileno())
+            verify(
+                hash_file=None,
+                data_folders=[output_folder],
+                no_paths_flag=False,
+                hash_flag=False,
+                cache_parent_folder=cache_parent_folder,
+                identifiers=[identifier],
+                file_filters=file_filters,
+            )
+
+        else:
+            log.warning(
+                "No files found associated with Internet Archive identifier '{}' (check that"
+                " the correct identifier has been entered)".format(identifier)
+            )
     if hash_pool is not None:
         log.debug("Waiting for hash tasks to complete")
         hash_pool.close()
@@ -998,172 +1164,272 @@ def download(
 
 
 def verify(
-    hash_file: str, data_folder: str, no_paths_flag: bool, hash_flag: bool, identifier: str = None
-):
+    hash_file: typing.Optional[str],
+    data_folders: str,
+    no_paths_flag: bool,
+    hash_flag: bool,
+    cache_parent_folder: str,
+    identifiers: typing.Optional[typing.List[str]] = None,
+    file_filters: typing.Optional[typing.List[str]] = None,
+    quiet: bool = False,
+) -> bool:
     """Verify that previously-downloaded files are complete"""
-    log = logging.getLogger(__name__)
-    if os.path.isfile(hash_file):
-        if os.path.isdir(data_folder):
-            # Get comparable dictionaries from both the hash metadata file (i.e. IA-side metadata)
-            # and local folder of files (i.e. local-side metadata of previously-downloaded files)
-            hashfile_metadata = get_metadata_from_hashfile(hash_file, hash_flag, identifier)
-            if len(hashfile_metadata) == 0:
+    if quiet:
+        log = logging.getLogger("quiet")
+    else:
+        log = logging.getLogger(__name__)
+    if hash_file is not None and not os.path.isfile(hash_file):
+        log.error("File '{}' does not exist".format(hash_file))
+        return False
+    for data_folder in data_folders:
+        if not os.path.isdir(data_folder):
+            log.error("Folder '{}' does not exist".format(data_folder))
+            return False
+
+    errors = 0
+    for data_folder in data_folders:
+        # Get comparable dictionaries from both the hash metadata file (i.e. IA-side metadata)
+        # and local folder of files (i.e. local-side metadata of previously-downloaded files)
+        missing_metadata_items = []
+        if hash_file is not None:
+            try:
+                hashfile_metadata = get_metadata_from_hashfile(
+                    hash_file, hash_flag, identifiers, file_filters
+                )
+            except ValueError:
                 log.error(
-                    "Hash file '{}' is empty - check correct file has been provided".format(
-                        hash_file
-                    )
+                    "Hash file '{}' does not match expected format - cannot be used for"
+                    " verification".format(hash_file)
                 )
-                return
-            relative_paths_from_ia_metadata = list(hashfile_metadata.keys())
-
-            if hash_flag:
-                md5_or_size_str = "MD5"
-            else:
-                md5_or_size_str = "Size"
-
-            if identifier is None:
-                log.info(
-                    "Verification of {} metadata for files in folder '{}' (using hash file '{}')"
-                    " begun".format(md5_or_size_str, data_folder, hash_file)
-                )
-            else:
-                log.info(
-                    "Verification of {} metadata for item '{}' files begun".format(
-                        md5_or_size_str, identifier
-                    )
-                )
-
-            mismatch_count = 0
-            if no_paths_flag:
-                folder_metadata = get_metadata_from_files_in_folder(data_folder, hash_flag)
-            else:
-                unique_identifier_dirs_from_ia_metadata = sorted(
-                    list(
-                        set(
-                            [
-                                pathlib.Path(relative_path).parts[0]
-                                for relative_path in relative_paths_from_ia_metadata
-                            ]
-                        )
-                    )
-                )
-                # Print warnings for item folders referenced in IA metadata that aren't found in
-                # the provided data folder
-                nonexistent_dirs = []
-                for identifier_dir in unique_identifier_dirs_from_ia_metadata:
-                    if not os.path.isdir(os.path.join(data_folder, identifier_dir)):
-                        log.warning(
-                            "Expected item folder '{}' was not found in provided data folder '{}' -"
-                            " make sure the parent download folder was provided rather than the"
-                            " item subfolder (e.g. provide '/downloads/' rather than"
-                            " '/downloads/item/'".format(identifier_dir, data_folder)
-                        )
-                        nonexistent_dirs.append(identifier_dir)
-
-                folder_metadata = get_metadata_from_files_in_folder(
-                    data_folder, hash_flag, relative_paths_from_ia_metadata
-                )
-
-                # Group warnings for each file in a non-existent folder into one unified warning
-                for nonexistent_dir in nonexistent_dirs:
-                    nonexistent_files = [
-                        relative_path
-                        for relative_path in relative_paths_from_ia_metadata
-                        if pathlib.Path(relative_path).parts[0] == nonexistent_dir
-                    ]
-                    log.warning(
-                        "Files in non-existent folder '{}' not found: {}".format(
-                            nonexistent_dir,
-                            ", ".join(
-                                [
-                                    "'{}'".format(nonexistent_file)
-                                    for nonexistent_file in nonexistent_files
-                                ]
-                            ),
-                        )
-                    )
-                    mismatch_count += len(nonexistent_files)
-                    # Delete non-existent files from the hashfile_metadata so we don't end up
-                    # iterating these later and printing more warning messages than necessary
-                    for nonexistent_file in nonexistent_files:
-                        if nonexistent_file in hashfile_metadata:
-                            del hashfile_metadata[nonexistent_file]
-
-            # Don't consider the [identifier]_files.xml files, as these regularly gives false
-            # positives (see README Known Issues)
-            xml_files_to_be_removed = [
-                relative_path
-                for relative_path in relative_paths_from_ia_metadata
-                if os.path.basename(relative_path)
-                == "{}_files.xml".format(pathlib.Path(relative_path).parts[0])
+                return False
+        else:
+            subfolders = [
+                item
+                for item in os.listdir(data_folder)
+                if os.path.isdir(os.path.join(data_folder, item))
             ]
-            for xml_file_to_be_removed in xml_files_to_be_removed:
-                if xml_file_to_be_removed in hashfile_metadata:
-                    del hashfile_metadata[xml_file_to_be_removed]
-
-            # If user has moved files, so they're no longer in the same relative file paths, they
-            # will need to set the 'nopaths' flag so that only hash/size metadata is checked rather
-            # than path data as well
-            # Disadvantage of this approach is that, if a file is stored in multiple locations, the
-            # unique hash/size will only be checked for once - so any deletions of multiple copies
-            # of the file will not be flagged
-            if no_paths_flag:
-                # Iterate only for hashes/sizes in the IA metadata that are not present in the local
-                # folder of downloaded files
-                for value in [
-                    value
-                    for value in hashfile_metadata.values()
-                    if value not in folder_metadata.values()
-                ]:
-                    log.warning(
-                        "{} '{}' (original filename(s) '{}') not found in data folder".format(
-                            md5_or_size_str,
-                            value,
-                            [k for k, v in hashfile_metadata.items() if v == value],
-                        )
+            hashfile_metadata = {}
+            if len(subfolders) == 0:
+                log.warning(
+                    "No item folders were found in provided data folder '{}' -"
+                    " make sure the parent download folder was provided rather than the"
+                    " item subfolder (e.g. provide '/downloads/' rather than"
+                    " '/downloads/item/'".format(data_folder)
+                )
+            for subfolder in subfolders:
+                if identifiers is not None:
+                    if subfolder not in identifiers:
+                        continue
+                # Find cache data for the subfolder (item) in question
+                cache_folder = os.path.join(cache_parent_folder, subfolder)
+                if os.path.isdir(cache_folder):
+                    # Get most recent cache file in folder
+                    cache_files = sorted(
+                        [
+                            f.path
+                            for f in os.scandir(cache_folder)
+                            if f.is_file() and f.name.endswith("metadata.txt")
+                        ]
                     )
-                    mismatch_count += 1
-
-            else:
-                for file_path, value in hashfile_metadata.items():
-                    if file_path not in folder_metadata:
-                        log.warning("File '{}' not found in data folder".format(file_path))
-                        mismatch_count += 1
+                    if len(cache_files) > 0:
+                        cache_file = cache_files[-1]
+                        try:
+                            hashfile_metadata.update(
+                                get_metadata_from_hashfile(
+                                    cache_file, hash_flag, identifiers, file_filters
+                                )
+                            )
+                        except ValueError:
+                            log.warning(
+                                "Cache file '{}' does not match expected format - cannot be used"
+                                " for verification".format(cache_file)
+                            )
+                            missing_metadata_items.append(subfolder)
                     else:
-                        if value != folder_metadata[file_path]:
-                            if value != "-1":
-                                log.warning(
-                                    "File '{}' {} does not match ('{}' in IA metadata, '{}' in data"
-                                    " folder)".format(
-                                        file_path,
-                                        md5_or_size_str,
-                                        value,
-                                        folder_metadata[file_path],
-                                    )
-                                )
-                                mismatch_count += 1
-                            else:
-                                log.debug(
-                                    "File '{}' {} is not available in IA metadata, so verification"
-                                    " not performed on this file".format(file_path, md5_or_size_str)
-                                )
-
-            log.info(
-                "Verification complete: {}".format(
-                    "{} files were not present or did not match Internet Archive {} metadata"
-                    .format(mismatch_count, md5_or_size_str)
-                    if mismatch_count > 0
-                    else (
-                        "all files were verified against Internet Archive {} data with no issues"
-                        " identified".format(md5_or_size_str)
+                        log.warning(
+                            "Cache data not found for subfolder/item '{}' - files for this item"
+                            " will not be checked".format(subfolder)
+                        )
+                        missing_metadata_items.append(subfolder)
+                else:
+                    log.warning(
+                        "Cache data not found for subfolder/item '{}' - files for this item will"
+                        " not be checked".format(subfolder)
                     )
+                    missing_metadata_items.append(subfolder)
+
+        if len(hashfile_metadata) == 0:
+            log.error(
+                "Hash file '{}' is empty - check correct file has been provided".format(hash_file)
+                if hash_file is not None
+                else "No metadata found in cache - verification cannot be performed"
+            )
+            errors += 1
+            continue
+
+        relative_paths_from_ia_metadata = list(hashfile_metadata.keys())
+
+        if hash_flag:
+            md5_or_size_str = "MD5"
+        else:
+            md5_or_size_str = "Size"
+
+        if identifiers is None:
+            log.info(
+                "Verification of {} metadata for files in folder '{}' begun{}".format(
+                    md5_or_size_str,
+                    data_folder,
+                    " (using hash file '{}')".format(hash_file) if hash_file is not None else "",
+                )
+            )
+        else:
+            log.info(
+                "Verification of {} metadata for item(s) {} files begun".format(
+                    md5_or_size_str,
+                    ", ".join(["'{}'".format(identifier) for identifier in identifiers]),
                 )
             )
 
+        mismatch_count = 0
+        if no_paths_flag:
+            folder_metadata = get_metadata_from_files_in_folder(data_folder, hash_flag)
         else:
-            log.error("Folder '{}' does not exist".format(data_folder))
-    else:
-        log.error("File '{}' does not exist".format(hash_file))
+            unique_identifier_dirs_from_ia_metadata = sorted(
+                list(
+                    set(
+                        [
+                            pathlib.Path(relative_path).parts[0]
+                            for relative_path in relative_paths_from_ia_metadata
+                        ]
+                    )
+                )
+            )
+            # Print warnings for item folders referenced in IA metadata that aren't found in
+            # the provided data folder
+            nonexistent_dirs = []
+            for identifier_dir in unique_identifier_dirs_from_ia_metadata:
+                if not os.path.isdir(os.path.join(data_folder, identifier_dir)):
+                    log.warning(
+                        "Expected item folder '{}' was not found in provided data folder '{}' -"
+                        " make sure the parent download folder was provided rather than the"
+                        " item subfolder (e.g. provide '/downloads/' rather than"
+                        " '/downloads/item/'".format(identifier_dir, data_folder)
+                    )
+                    nonexistent_dirs.append(identifier_dir)
+
+            folder_metadata = get_metadata_from_files_in_folder(
+                data_folder, hash_flag, relative_paths_from_ia_metadata
+            )
+
+            # Group warnings for each file in a non-existent folder into one unified warning
+            for nonexistent_dir in nonexistent_dirs:
+                nonexistent_files = [
+                    relative_path
+                    for relative_path in relative_paths_from_ia_metadata
+                    if pathlib.Path(relative_path).parts[0] == nonexistent_dir
+                ]
+                log.warning(
+                    "Files in non-existent folder '{}' not found: {}".format(
+                        nonexistent_dir,
+                        ", ".join(
+                            [
+                                "'{}'".format(nonexistent_file)
+                                for nonexistent_file in nonexistent_files
+                            ]
+                        ),
+                    )
+                )
+                mismatch_count += len(nonexistent_files)
+                # Delete non-existent files from the hashfile_metadata so we don't end up
+                # iterating these later and printing more warning messages than necessary
+                for nonexistent_file in nonexistent_files:
+                    if nonexistent_file in hashfile_metadata:
+                        del hashfile_metadata[nonexistent_file]
+
+        # Don't consider the [identifier]_files.xml files, as these regularly gives false
+        # positives (see README Known Issues)
+        xml_files_to_be_removed = [
+            relative_path
+            for relative_path in relative_paths_from_ia_metadata
+            if os.path.basename(relative_path)
+            == "{}_files.xml".format(pathlib.Path(relative_path).parts[0])
+        ]
+        for xml_file_to_be_removed in xml_files_to_be_removed:
+            if xml_file_to_be_removed in hashfile_metadata:
+                del hashfile_metadata[xml_file_to_be_removed]
+
+        # If user has moved files, so they're no longer in the same relative file paths, they
+        # will need to set the 'nopaths' flag so that only hash/size metadata is checked rather
+        # than path data as well
+        # Disadvantage of this approach is that, if a file is stored in multiple locations, the
+        # unique hash/size will only be checked for once - so any deletions of multiple copies
+        # of the file will not be flagged
+        if no_paths_flag:
+            # Iterate only for hashes/sizes in the IA metadata that are not present in the local
+            # folder of downloaded files
+            for value in [
+                value
+                for value in hashfile_metadata.values()
+                if value not in folder_metadata.values()
+            ]:
+                log.warning(
+                    "{} '{}' (original filename(s) '{}') not found in data folder".format(
+                        md5_or_size_str,
+                        value,
+                        [k for k, v in hashfile_metadata.items() if v == value],
+                    )
+                )
+                mismatch_count += 1
+
+        else:
+            for file_path, value in hashfile_metadata.items():
+                if file_path not in folder_metadata:
+                    log.warning(
+                        "File '{}' not found in data folder '{}'".format(file_path, data_folder)
+                    )
+                    mismatch_count += 1
+                else:
+                    if value != folder_metadata[file_path]:
+                        if value != "-1":
+                            log.warning(
+                                "File '{}' {} does not match ('{}' in IA metadata, '{}' in data"
+                                " folder)".format(
+                                    file_path,
+                                    md5_or_size_str,
+                                    value,
+                                    folder_metadata[file_path],
+                                )
+                            )
+                            mismatch_count += 1
+                        else:
+                            log.debug(
+                                "File '{}' {} is not available in IA metadata, so verification"
+                                " not performed on this file".format(file_path, md5_or_size_str)
+                            )
+
+        issue_message = ""
+        if len(missing_metadata_items) > 0:
+            issue_message += "cached metadata missing for items {}; ".format(
+                ", ".join(["'{}'".format(item) for item in missing_metadata_items])
+            )
+        if mismatch_count > 0:
+            issue_message += (
+                "{} files were not present or did not match Internet Archive {} metadata; ".format(
+                    mismatch_count, md5_or_size_str
+                )
+            )
+        if issue_message == "":
+            issue_message = (
+                "all files were verified against Internet Archive {} data with no issues identified"
+                .format(md5_or_size_str)
+            )
+        else:
+            issue_message = issue_message[:-2]
+        log.info("Verification of '{}' complete: {}".format(data_folder, issue_message))
+        errors += len(missing_metadata_items) + mismatch_count
+    if errors > 0:
+        return False
+    return True
 
 
 def main() -> None:
@@ -1205,7 +1471,7 @@ def main() -> None:
             " items within the collection), use the prefix 'collection:' (e.g. 'collection:nasa')"
         ),
     )
-    download_parser.add_argument("output_folder", type=str, help="Folder to output to")
+    download_parser.add_argument("output_folder", type=str, help="Folder to download files to")
     download_parser.add_argument(
         "-t",
         "--threads",
@@ -1273,17 +1539,50 @@ def main() -> None:
             " be created in the output folder)"
         ),
     )
+    download_parser.add_argument(
+        "--cacherefresh",
+        default=False,
+        action="store_true",
+        help="Flag to update any cached Internet Archive metadata from previous script executions",
+    )
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument(
-        "hashfile",
+        "data_folders",
         type=str,
-        help="Path to file containing hash metadata from previous download using this script",
+        nargs="+",
+        help="Path to folder containing previously downloaded data",
     )
     verify_parser.add_argument(
-        "data_folder",
+        "-i",
+        "--identifiers",
         type=str,
-        help="Path to folder containing previously downloaded data",
+        nargs="+",
+        help=(
+            "One or more (space separated) Archive.org identifiers (e.g."
+            " 'gov.archives.arc.1155023') - to be used if only certain item(s) in the target"
+            " folder(s) are to be verified"
+        ),
+    )
+    verify_parser.add_argument(
+        "--hashfile",
+        type=str,
+        help=(
+            "Path to file containing hash metadata from previous download using this script (if not"
+            " specified, cached data from previous script execution will be used)"
+        ),
+    )
+    verify_parser.add_argument(
+        "-f",
+        "--filefilters",
+        type=str,
+        nargs="+",
+        help=(
+            "One or more (space separated) file name filters; only files that contain any of the"
+            " provided filter strings (case insensitive) will be downloaded. If multiple filters"
+            " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
+            " to hit)"
+        ),
     )
     verify_parser.add_argument(
         "--nopaths",
@@ -1299,9 +1598,14 @@ def main() -> None:
     args = parser.parse_args()
 
     # Set up logging
-    pathlib.Path(args.logfolder).mkdir(parents=True, exist_ok=True)
+    log_subfolders = ["logs", "cache"]
+    for log_subfolder in log_subfolders:
+        pathlib.Path(os.path.join(args.logfolder, log_subfolder)).mkdir(parents=True, exist_ok=True)
     log, counter_handler = prepare_logging(
-        datetime_string, args.logfolder, "ia_downloader", dict(vars(args))
+        datetime_string,
+        os.path.join(args.logfolder, log_subfolders[0]),
+        "ia_downloader",
+        dict(vars(args)),
     )
     log.info(
         "Internet Archive is a non-profit organisation that is experiencing unprecedented service"
@@ -1311,7 +1615,7 @@ def main() -> None:
 
     try:
         if args.command == "download":
-            if args.credentials:
+            if args.credentials is not None:
                 try:
                     internetarchive.configure(args.credentials[0], args.credentials[1])
                 except internetarchive.exceptions.AuthenticationError:
@@ -1321,6 +1625,12 @@ def main() -> None:
                         " be wrapped in quotation marks)"
                     )
                     return
+            if args.hashfile is not None:
+                log.info(
+                    "Internet Archive metadata will be written to hash file at '{}'".format(
+                        args.hashfile
+                    )
+                )
             if args.threads > 5 or args.split > 5:
                 log.info(
                     "Reducing download threads to 5, to optimise script performance and reduce"
@@ -1328,7 +1638,6 @@ def main() -> None:
                 )
                 args.threads = min(args.threads, 5)
                 args.split = min(args.split, 5)
-
             if args.split > 1:
                 if args.threads > 1:
                     log.info(
@@ -1336,33 +1645,36 @@ def main() -> None:
                         " as to not overwhelm Internet Archive servers"
                     )
                     args.threads = 1
+            hashfile_file_handler = None
+            if args.hashfile:
+                hashfile_file_handler = open(args.hashfile, "w")
 
             for identifier in args.identifiers:
-                if args.hashfile is None:
-                    hash_file = os.path.join(
-                        args.output_folder,
-                        "{}_ia_downloader_hashes.txt".format(datetime_string),
-                    )
-                else:
-                    hash_file = args.hashfile
-
                 download(
                     identifier=identifier,
                     output_folder=args.output_folder,
-                    hash_file=hash_file,
+                    hash_file=hashfile_file_handler,
                     thread_count=args.threads,
                     resume_flag=args.resume,
                     verify_flag=args.verify,
                     split_count=args.split,
                     file_filters=args.filefilters,
+                    cache_parent_folder=os.path.join(args.logfolder, log_subfolders[1]),
+                    cache_refresh=args.cacherefresh,
                 )
+
+            if args.hashfile:
+                hashfile_file_handler.close()
 
         elif args.command == "verify":
             verify(
                 hash_file=args.hashfile,
-                data_folder=args.data_folder,
+                data_folders=args.data_folders,
                 no_paths_flag=args.nopaths,
                 hash_flag=True,
+                cache_parent_folder=os.path.join(args.logfolder, log_subfolders[1]),
+                identifiers=args.identifiers,
+                file_filters=args.filefilters,
             )
 
         if counter_handler.count["WARNING"] > 0 or counter_handler.count["ERROR"] > 0:
