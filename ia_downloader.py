@@ -765,7 +765,6 @@ def file_download(
             else "",
         )
     )
-
     # If user has opted to verify downloads, add the task to the hash_pool
     if chunk_number is None:  # Only hash if we're in a thread that isn't downloading a file chunk
         if hash_pool is not None:
@@ -792,15 +791,12 @@ def download(
     """Download files associated with an Internet Archive identifier"""
     log = logging.getLogger(__name__)
     PROCESSES = multiprocessing.cpu_count() - 1
+    MAX_RETRIES = 5
 
     # Create output folder if it doesn't already exist
     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
 
     log.info("'{}' contents will be downloaded to '{}'".format(identifier, output_folder))
-
-    connection_retry_counter = 0
-    MAX_RETRIES = 5
-    connection_wait_timer = 600
 
     identifiers = []
     # If the identifier is a collection, get a list of identifiers associated with the collection
@@ -832,6 +828,8 @@ def download(
                         for line in file_handler:
                             identifiers.append(line.strip())
         if len(identifiers) == 0:
+            connection_retry_counter = 0
+            connection_wait_timer = 600
             while True:
                 try:
                     search_results = internetarchive.search_items(identifier)
@@ -1023,8 +1021,6 @@ def download(
                 if "size" not in file:
                     file["size"] = -1
                     log.debug("'{}' has no size metadata".format(file["name"]))
-                else:
-                    item_filtered_files_size += int(file["size"])
                 if "mtime" not in file:
                     file["mtime"] = -1
                     log.debug("'{}' has no mtime metadata".format(file["name"]))
@@ -1038,6 +1034,8 @@ def download(
                         substring.lower() in file["name"].lower() for substring in file_filters
                     ):
                         continue
+                if file["size"] != -1:
+                    item_filtered_files_size += int(file["size"])
                 if hash_file is not None:
                     hash_file.write(log_write_str)
 
@@ -1496,7 +1494,6 @@ def main() -> None:
         action="store_true",
         help=(
             "Attempt to resume downloads using already-downloaded data if a connection error occurs"
-            " (experimental)"
         ),
     )
     download_parser.add_argument(
@@ -1506,7 +1503,7 @@ def main() -> None:
         default=1,
         help=(
             "To increase per-file download speeds, split files above 10MB into provided number of"
-            " chunks, and reconstruct on completion (experimental)"
+            " chunks, and reconstruct on completion"
         ),
     )
     download_parser.add_argument(
@@ -1579,7 +1576,7 @@ def main() -> None:
         nargs="+",
         help=(
             "One or more (space separated) file name filters; only files that contain any of the"
-            " provided filter strings (case insensitive) will be downloaded. If multiple filters"
+            " provided filter strings (case insensitive) will be verified. If multiple filters"
             " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
             " to hit)"
         ),
