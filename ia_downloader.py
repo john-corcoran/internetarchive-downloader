@@ -510,9 +510,11 @@ def file_download(
                         status_code = http_error.response.status_code
                         if status_code == 403:
                             log.warning(
-                                "'{}' - 403 forbidden error occurred - an account login may"
-                                " be required to access this file (account details can be passed"
-                                " using the '-c' flag)".format(ia_file_name)
+                                "'{}' - 403 Forbidden error occurred - an account login may be"
+                                " required to access this file (account details can be passed using"
+                                " the '-c' flag) - note that download may not be possible even when"
+                                " logged in, if the file is within a restricted access item (e.g."
+                                " books in the lending program)".format(ia_file_name)
                             )
                         else:
                             log.warning(
@@ -563,9 +565,11 @@ def file_download(
                         status_code = http_error.response.status_code
                         if status_code == 403:
                             log.warning(
-                                "'{}' - 403 forbidden error occurred - an account login may"
-                                " be required to access this file (account details can be passed"
-                                " using the '-c' flag)".format(ia_file_name)
+                                "'{}' - 403 Forbidden error occurred - an account login may be"
+                                " required to access this file (account details can be passed using"
+                                " the '-c' flag) - note that download may not be possible even when"
+                                " logged in, if the file is within a restricted access item (e.g."
+                                " books in the lending program)".format(ia_file_name)
                             )
                         else:
                             log.warning(
