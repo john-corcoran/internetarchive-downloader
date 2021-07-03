@@ -968,8 +968,11 @@ def download(
                             log.warning(
                                 "Internet Archive item '{}' was updated within the last week (last"
                                 " updated on {}) - verification/corruption issues may occur if"
-                                " files are being updated by the uploader. If such errors occur when resuming a download, recommend using the '--cacherefresh' flag"
-                                .format(identifier, item_updated_time.strftime("%Y-%m-%d %H:%M:%S"))
+                                " files are being updated by the uploader. If such errors occur"
+                                " when resuming a download, recommend using the '--cacherefresh'"
+                                " flag".format(
+                                    identifier, item_updated_time.strftime("%Y-%m-%d %H:%M:%S")
+                                )
                             )
                 except requests.exceptions.ConnectionError:
                     if connection_retry_counter < MAX_RETRIES:
@@ -1295,9 +1298,10 @@ def verify(
             )
         else:
             log.info(
-                "Verification of {} metadata for item(s) {} files begun".format(
+                "Verification of {} metadata for item(s) {} files in folder '{}' begun".format(
                     md5_or_size_str,
                     ", ".join(["'{}'".format(identifier) for identifier in identifiers]),
+                    data_folder,
                 )
             )
 
@@ -1436,7 +1440,16 @@ def verify(
             )
         else:
             issue_message = issue_message[:-2]
-        log.info("Verification of '{}' complete: {}".format(data_folder, issue_message))
+        if identifiers is None:
+            log.info("Verification of folder '{}' complete: {}".format(data_folder, issue_message))
+        else:
+            log.info(
+                "Verification of item(s) {} in folder '{}' complete: {}".format(
+                    ", ".join(["'{}'".format(identifier) for identifier in identifiers]),
+                    data_folder,
+                    issue_message,
+                )
+            )
         errors += len(missing_metadata_items) + mismatch_count
     if errors > 0:
         return False
