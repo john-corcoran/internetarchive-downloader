@@ -101,7 +101,7 @@ def prepare_logging(
                     platform_detail_request, getattr(platform, platform_detail_request)()
                 )
             )
-        except:
+        except:  # pylint: disable=W0702
             pass
     # Sanitise username and passwords if credentials flag is present
     if "credentials" in args:
@@ -197,7 +197,7 @@ def get_metadata_from_files_in_folder(
 
 
 def md5_hash_file(filepath: str) -> str:
-    """Return str containing lowercase MD5 hash value of a file"""
+    """Return str containing lowercase MD5 hash value of file at a file path"""
     block_size = 64 * 1024
     md5 = hashlib.md5()
     with open(filepath, "rb") as file_handler:
@@ -209,7 +209,7 @@ def md5_hash_file(filepath: str) -> str:
     return md5.hexdigest()
 
 
-def hash_pool_initializer():
+def hash_pool_initializer() -> None:
     """Ignore CTRL+C in the hash worker processes (workers are daemonic so will close when the
     main process terminates)
 
@@ -514,7 +514,9 @@ def file_download(
                                 " required to access this file (account details can be passed using"
                                 " the '-c' flag) - note that download may not be possible even when"
                                 " logged in, if the file is within a restricted access item (e.g."
-                                " books in the lending program)".format(ia_file_name)
+                                " books in the lending program or 'stream only' videos)".format(
+                                    ia_file_name
+                                )
                             )
                         else:
                             log.warning(
