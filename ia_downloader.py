@@ -968,7 +968,7 @@ def download(
                 ]
             )
             if len(cache_files) > 0:
-                cache_file = cache_files[-1]
+                cache_file = cache_files[-1]  # Get the most recent cache file
                 # Get datetime from filename
                 datetime_str = "_".join(os.path.basename(cache_file).split("_", 2)[:2])
                 file_datetime = datetime.datetime.strptime(datetime_str, "%Y%m%d_%H%M%S")
@@ -1124,7 +1124,11 @@ def download(
 
             # Check if the output folder already seems to have all the files we expect
             # Check if files in download queue equal files in folder
-            if len(file_paths_in_folder(os.path.join(output_folder, identifier))) > 0:
+            identifier_output_folder = os.path.join(output_folder, identifier)
+            if (
+                os.path.isdir(identifier_output_folder)
+                and len(file_paths_in_folder(identifier_output_folder)) > 0
+            ):
                 size_verification = verify(
                     hash_file=None,
                     data_folders=[output_folder],
