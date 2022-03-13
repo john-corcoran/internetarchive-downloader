@@ -17,6 +17,15 @@ import sys
 import time
 import typing
 
+dark_grey = "\x1b[90;20m"
+bold_grey = "\x1b[37;1m"
+blue = "\x1b[94;20m"
+green = "\x1b[92;20m"
+yellow = "\x1b[33;20m"
+red = "\x1b[31;20m"
+bold_red = "\x1b[31;1m"
+reset = "\x1b[0m"
+
 python_major, python_minor = platform.python_version_tuple()[0:2]
 if int(python_major) < 3 or int(python_minor) < 7:
     print(
@@ -54,6 +63,22 @@ class MsgCounterHandler(logging.Handler):
             self.count[levelname] = 0
         self.count[levelname] += 1
 
+class ColorFormatter(logging.Formatter):
+
+    format = "%(asctime)s - %(levelname)s - %(message)s"
+
+    FORMATS = {
+        logging.DEBUG: dark_grey + format + reset,
+        logging.INFO: dark_grey + format + reset,
+        logging.WARNING: yellow + format + reset,
+        logging.ERROR: red + format + reset,
+        logging.CRITICAL: bold_red + format + reset
+    }
+
+    def format(self, record):
+        log_fmt = self.FORMATS.get(record.levelno)
+        formatter = logging.Formatter(log_fmt)
+        return formatter.format(record)
 
 def prepare_logging(
     datetime_string: str, folder_path: str, identifier: str, args: typing.Dict[str, typing.Any]
@@ -79,7 +104,7 @@ def prepare_logging(
     info_log.setFormatter(formatter)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
-    console_handler.setFormatter(formatter)
+    console_handler.setFormatter(ColorFormatter())
     counter_handler = MsgCounterHandler()
     log.addHandler(debug_log)
     log.addHandler(info_log)
@@ -539,7 +564,7 @@ def file_download(
         while True:
             try:
                 if not resume_flag and chunk_number is None:
-                    log.info("'{}' - beginning download".format(dest_file_name))
+                    log.info("{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue))
                     try:
                         internetarchive.download(
                             identifier,
@@ -577,14 +602,14 @@ def file_download(
                             # will also give different hash values per download - so would be
                             # wasting time to calc hash as there'll always be a mismatch requiring
                             # a full re-download)
-                            log.info("'{}' - beginning re-download".format(dest_file_name))
+                            log.info("{}'{}'{} - beginning re-download".format(bold_grey, dest_file_name, blue))
                             file_write_mode = "wb"
                         elif resume_flag:
-                            log.info("'{}' - resuming download".format(dest_file_name))
+                            log.info("{}'{}'{} - resuming download".format(bold_grey, dest_file_name, blue))
                             file_write_mode = "ab"
                             partial_file_size = os.path.getsize(dest_file_path)
                     else:
-                        log.info("'{}' - beginning download".format(dest_file_name))
+                        log.info("{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue))
                         file_write_mode = "wb"
                         pathlib.Path(os.path.dirname(dest_file_path)).mkdir(
                             parents=True, exist_ok=True
@@ -805,8 +830,10 @@ def file_download(
     # amount of data downloaded in this session, for accurate stats on how long it took to download
     downloaded_data_in_mb = ((expected_file_size - initial_file_size) / 1024) / 1024
     log.info(
-        "'{}' - download completed in {}{}".format(
+        "{}'{}'{} - download completed in {}{}".format(
+            bold_grey,
             dest_file_name,
+            green,
             datetime.timedelta(seconds=round(int(duration.total_seconds()))),
             " ({:.2f}MB per minute)".format(downloaded_data_in_mb / duration_in_minutes)
             if expected_file_size > 1048576  # 1MB; seems inaccurate for files beneath this size
