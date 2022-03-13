@@ -63,6 +63,7 @@ class MsgCounterHandler(logging.Handler):
             self.count[levelname] = 0
         self.count[levelname] += 1
 
+
 class ColorFormatter(logging.Formatter):
 
     format = "%(asctime)s - %(levelname)s - %(message)s"
@@ -72,13 +73,14 @@ class ColorFormatter(logging.Formatter):
         logging.INFO: dark_grey + format + reset,
         logging.WARNING: yellow + format + reset,
         logging.ERROR: red + format + reset,
-        logging.CRITICAL: bold_red + format + reset
+        logging.CRITICAL: bold_red + format + reset,
     }
 
     def format(self, record):
         log_fmt = self.FORMATS.get(record.levelno)
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
+
 
 def prepare_logging(
     datetime_string: str, folder_path: str, identifier: str, args: typing.Dict[str, typing.Any]
@@ -180,6 +182,7 @@ def get_metadata_from_hashfile(
     hash_flag: bool,
     identifier_filter: typing.Optional[typing.List[str]] = None,
     file_filters: typing.Optional[typing.List[str]] = None,
+    invert_file_filtering: bool = False,
 ) -> typing.Dict[str, str]:
     """Return dict of file paths and associated metadata parsed from IA hash metadata CSV"""
     results = {}  # type: typing.Dict[str, str]
@@ -187,8 +190,14 @@ def get_metadata_from_hashfile(
         for line in file_handler:
             identifier, file_path, size, md5, mtime = line.strip().split("|")
             if file_filters is not None:
-                if not any(substring.lower() in file_path.lower() for substring in file_filters):
-                    continue
+                if not invert_file_filtering:
+                    if not any(
+                        substring.lower() in file_path.lower() for substring in file_filters
+                    ):
+                        continue
+                else:
+                    if any(substring.lower() in file_path.lower() for substring in file_filters):
+                        continue
             if identifier_filter is None or identifier in identifier_filter:
                 if hash_flag:
                     results[
@@ -564,7 +573,9 @@ def file_download(
         while True:
             try:
                 if not resume_flag and chunk_number is None:
-                    log.info("{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue))
+                    log.info(
+                        "{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue)
+                    )
                     try:
                         internetarchive.download(
                             identifier,
@@ -602,14 +613,24 @@ def file_download(
                             # will also give different hash values per download - so would be
                             # wasting time to calc hash as there'll always be a mismatch requiring
                             # a full re-download)
-                            log.info("{}'{}'{} - beginning re-download".format(bold_grey, dest_file_name, blue))
+                            log.info(
+                                "{}'{}'{} - beginning re-download".format(
+                                    bold_grey, dest_file_name, blue
+                                )
+                            )
                             file_write_mode = "wb"
                         elif resume_flag:
-                            log.info("{}'{}'{} - resuming download".format(bold_grey, dest_file_name, blue))
+                            log.info(
+                                "{}'{}'{} - resuming download".format(
+                                    bold_grey, dest_file_name, blue
+                                )
+                            )
                             file_write_mode = "ab"
                             partial_file_size = os.path.getsize(dest_file_path)
                     else:
-                        log.info("{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue))
+                        log.info(
+                            "{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue)
+                        )
                         file_write_mode = "wb"
                         pathlib.Path(os.path.dirname(dest_file_path)).mkdir(
                             parents=True, exist_ok=True
@@ -860,6 +881,7 @@ def download(
     verify_flag: bool,
     split_count: int,
     file_filters: typing.Optional[typing.List[str]],
+    invert_file_filtering: bool,
     cache_parent_folder: str,
     cache_refresh: bool,
 ) -> None:
@@ -1121,10 +1143,16 @@ def download(
                 if not isinstance(item, CacheDict):
                     cache_file_handler.write(log_write_str)
                 if file_filters is not None:
-                    if not any(
-                        substring.lower() in file["name"].lower() for substring in file_filters
-                    ):
-                        continue
+                    if not invert_file_filtering:
+                        if not any(
+                            substring.lower() in file["name"].lower() for substring in file_filters
+                        ):
+                            continue
+                    else:
+                        if any(
+                            substring.lower() in file["name"].lower() for substring in file_filters
+                        ):
+                            continue
                 if file["size"] != -1:
                     item_filtered_files_size += int(file["size"])
                 if hash_file is not None:
@@ -1164,6 +1192,7 @@ def download(
                     cache_parent_folder=cache_parent_folder,
                     identifiers=[identifier],
                     file_filters=file_filters,
+                    invert_file_filtering=invert_file_filtering,
                     quiet=True,
                 )
                 if size_verification:
@@ -1191,23 +1220,42 @@ def download(
                 )
 
             if file_filters is not None:
-                if len(download_queue) > 0:
-                    log.info(
-                        "{} files ({}) match file filter(s) '{}' (case insensitive) and will be"
-                        " downloaded (out of a total of {} files ({}) available)".format(
-                            len(download_queue),
-                            bytes_filesize_to_readable_str(item_filtered_files_size),
-                            " ".join(file_filters),
-                            item_file_count,
-                            bytes_filesize_to_readable_str(item_total_size),
+                if not invert_file_filtering:
+                    if len(download_queue) > 0:
+                        log.info(
+                            "{} files ({}) match file filter(s) '{}' (case insensitive) and will be"
+                            " downloaded (out of a total of {} files ({}) available)".format(
+                                len(download_queue),
+                                bytes_filesize_to_readable_str(item_filtered_files_size),
+                                " ".join(file_filters),
+                                item_file_count,
+                                bytes_filesize_to_readable_str(item_total_size),
+                            )
                         )
-                    )
+                    else:
+                        log.info(
+                            "No files match the filter(s) '{}' in item '{}' - no downloads will be"
+                            " performed".format(" ".join(file_filters), identifier)
+                        )
+                        continue
                 else:
-                    log.info(
-                        "No files match the filter(s) '{}' in item '{}' - no downloads will be"
-                        " performed".format(" ".join(file_filters), identifier)
-                    )
-                    continue
+                    if len(download_queue) > 0:
+                        log.info(
+                            "{} files ({}) NOT matching file filter(s) '{}' (case insensitive) will"
+                            " be downloaded (out of a total of {} files ({}) available)".format(
+                                len(download_queue),
+                                bytes_filesize_to_readable_str(item_filtered_files_size),
+                                " ".join(file_filters),
+                                item_file_count,
+                                bytes_filesize_to_readable_str(item_total_size),
+                            )
+                        )
+                    else:
+                        log.info(
+                            "All files are excluded by filter(s) '{}' in item '{}' - no downloads"
+                            " will be performed".format(" ".join(file_filters), identifier)
+                        )
+                        continue
             else:
                 log.info(
                     "'{}' contains {} files ({})".format(
@@ -1243,6 +1291,7 @@ def download(
                 cache_parent_folder=cache_parent_folder,
                 identifiers=[identifier],
                 file_filters=file_filters,
+                invert_file_filtering=invert_file_filtering,
             )
 
         else:
@@ -1264,6 +1313,7 @@ def verify(
     cache_parent_folder: str,
     identifiers: typing.Optional[typing.List[str]] = None,
     file_filters: typing.Optional[typing.List[str]] = None,
+    invert_file_filtering: bool = False,
     quiet: bool = False,
 ) -> bool:
     """Verify that previously-downloaded files are complete"""
@@ -1287,7 +1337,7 @@ def verify(
         if hash_file is not None:
             try:
                 hashfile_metadata = get_metadata_from_hashfile(
-                    hash_file, hash_flag, identifiers, file_filters
+                    hash_file, hash_flag, identifiers, file_filters, invert_file_filtering
                 )
             except ValueError:
                 log.error(
@@ -1329,7 +1379,11 @@ def verify(
                         try:
                             hashfile_metadata.update(
                                 get_metadata_from_hashfile(
-                                    cache_file, hash_flag, identifiers, file_filters
+                                    cache_file,
+                                    hash_flag,
+                                    identifiers,
+                                    file_filters,
+                                    invert_file_filtering,
                                 )
                             )
                         except ValueError:
@@ -1624,6 +1678,15 @@ def main() -> None:
         ),
     )
     download_parser.add_argument(
+        "--invertfilefiltering",
+        default=False,
+        action="store_true",
+        help=(
+            "Invert file filtering process so that only files NOT matching filefilters will be"
+            " downloaded"
+        ),
+    )
+    download_parser.add_argument(
         "-c",
         "--credentials",
         type=str,
@@ -1687,6 +1750,15 @@ def main() -> None:
         ),
     )
     verify_parser.add_argument(
+        "--invertfilefiltering",
+        default=False,
+        action="store_true",
+        help=(
+            "Invert file filtering process so that only files NOT matching filefilters will be"
+            " verified"
+        ),
+    )
+    verify_parser.add_argument(
         "--nopaths",
         default=False,
         action="store_true",
@@ -1709,6 +1781,8 @@ def main() -> None:
         "ia_downloader",
         dict(vars(args)),
     )
+    if args.filefilters is None and args.invertfilefiltering:
+        log.warning("--invertfilefiltering flag will be ignored as no file filters were provided")
     log.info(
         "Internet Archive is a non-profit organisation that is experiencing unprecedented service"
         " demand. Please consider making a donation: https://archive.org/donate"
@@ -1761,6 +1835,7 @@ def main() -> None:
                     verify_flag=args.verify,
                     split_count=args.split,
                     file_filters=args.filefilters,
+                    invert_file_filtering=args.invertfilefiltering,
                     cache_parent_folder=os.path.join(args.logfolder, log_subfolders[1]),
                     cache_refresh=args.cacherefresh,
                 )
@@ -1777,6 +1852,7 @@ def main() -> None:
                 cache_parent_folder=os.path.join(args.logfolder, log_subfolders[1]),
                 identifiers=args.identifiers,
                 file_filters=args.filefilters,
+                invert_file_filtering=args.invertfilefiltering,
             )
 
         if counter_handler.count["WARNING"] > 0 or counter_handler.count["ERROR"] > 0:
