@@ -576,33 +576,40 @@ def file_download(
                     log.info(
                         "{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue)
                     )
-                    try:
-                        internetarchive.download(
-                            identifier,
-                            files=[ia_file_name],
-                            destdir=output_folder,
-                            on_the_fly=True,
-                            silent=True,
-                        )
-                    except requests.exceptions.HTTPError as http_error:
-                        status_code = http_error.response.status_code
-                        if status_code == 403:
-                            log.warning(
-                                "'{}' - 403 Forbidden error occurred - an account login may be"
-                                " required to access this file (account details can be passed using"
-                                " the '-c' flag) - note that download may not be possible even when"
-                                " logged in, if the file is within a restricted access item (e.g."
-                                " books in the lending program or 'stream only' videos)".format(
-                                    ia_file_name
-                                )
+                    while True:
+                        try:
+                            internetarchive.download(
+                                identifier,
+                                files=[ia_file_name],
+                                destdir=output_folder,
+                                on_the_fly=True,
+                                silent=True,
                             )
-                        else:
-                            log.warning(
-                                "'{}' - {} error status returned when attempting download".format(
-                                    ia_file_name, status_code
+                            break
+                        except requests.exceptions.HTTPError as http_error:
+                            status_code = http_error.response.status_code
+                            if status_code == 403:
+                                log.warning(
+                                    "'{}' - 403 Forbidden error occurred - an account login may be"
+                                    " required to access this file (account details can be passed"
+                                    " using the '-c' flag) - note that download may not be possible"
+                                    " even when logged in, if the file is within a restricted"
+                                    " access item (e.g. books in the lending program or 'stream"
+                                    " only' videos)".format(ia_file_name)
                                 )
+                            else:
+                                log.warning(
+                                    "'{}' - {} error status returned when attempting download"
+                                    .format(ia_file_name, status_code)
+                                )
+                            return
+                        except FileExistsError:
+                            log.debug(
+                                "FileExistsError for {} occurred - this seems to happen"
+                                " occasionally on Windows and Ubuntu, but a retry seems to fix"
+                                .format(ia_file_name)
                             )
-                        return
+                            time.sleep(2)
                 else:
                     partial_file_size = 0
                     if os.path.isfile(dest_file_path):
