@@ -12,6 +12,7 @@ import multiprocessing.pool
 import os
 import pathlib
 import platform
+import re
 import signal
 import sys
 import time
@@ -66,20 +67,29 @@ class MsgCounterHandler(logging.Handler):
 
 class ColorFormatter(logging.Formatter):
 
-    format = "%(asctime)s - %(levelname)s - %(message)s"
+    msg_format = "%(asctime)s - %(levelname)s - %(message)s"
 
     FORMATS = {
-        logging.DEBUG: dark_grey + format + reset,
-        logging.INFO: dark_grey + format + reset,
-        logging.WARNING: yellow + format + reset,
-        logging.ERROR: red + format + reset,
-        logging.CRITICAL: bold_red + format + reset,
+        logging.DEBUG: dark_grey + msg_format + reset,
+        logging.INFO: dark_grey + msg_format + reset,
+        logging.WARNING: yellow + msg_format + reset,
+        logging.ERROR: red + msg_format + reset,
+        logging.CRITICAL: bold_red + msg_format + reset,
     }
 
     def format(self, record):
         log_fmt = self.FORMATS.get(record.levelno)
-        formatter = logging.Formatter(log_fmt)
+        formatter = logging.Formatter(log_fmt, "%Y-%m-%d %H:%M:%S")
         return formatter.format(record)
+
+
+class TermEscapeCodeFilter(logging.Filter):
+    """A class to strip the escape codes from log messages destined for log files"""
+
+    def filter(self, record):
+        escape_re = re.compile(r"\x1b\[[0-9;]*m")
+        record.msg_without_colours = re.sub(escape_re, "", str(record.msg))
+        return True
 
 
 def prepare_logging(
@@ -93,17 +103,20 @@ def prepare_logging(
     # 'Quiet' logger for when quiet flag used in functions
     quiet = logging.getLogger("quiet")
     quiet.setLevel(logging.ERROR)
-    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    log_file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(msg_without_colours)s")
+    log_file_filter = TermEscapeCodeFilter()
     debug_log = logging.FileHandler(
         os.path.join(folder_path, "{}_{}_debug.log".format(datetime_string, identifier))
     )
     debug_log.setLevel(logging.DEBUG)
-    debug_log.setFormatter(formatter)
+    debug_log.setFormatter(log_file_formatter)
+    debug_log.addFilter(log_file_filter)
     info_log = logging.FileHandler(
         os.path.join(folder_path, "{}_{}_info.log".format(datetime_string, identifier))
     )
     info_log.setLevel(logging.INFO)
-    info_log.setFormatter(formatter)
+    info_log.setFormatter(log_file_formatter)
+    info_log.addFilter(log_file_filter)
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(ColorFormatter())
@@ -605,7 +618,7 @@ def file_download(
                             return
                         except FileExistsError:
                             log.debug(
-                                "FileExistsError for {} occurred - this seems to happen"
+                                "FileExistsError for '{}' occurred - this seems to happen"
                                 " occasionally on Windows and Ubuntu, but a retry seems to fix"
                                 .format(ia_file_name)
                             )
@@ -1689,7 +1702,7 @@ def main() -> None:
         default=False,
         action="store_true",
         help=(
-            "Invert file filtering process so that only files NOT matching filefilters will be"
+            "Invert file filtering logic so that only files NOT matching filefilters will be"
             " downloaded"
         ),
     )
@@ -1761,7 +1774,7 @@ def main() -> None:
         default=False,
         action="store_true",
         help=(
-            "Invert file filtering process so that only files NOT matching filefilters will be"
+            "Invert file filtering logic so that only files NOT matching filefilters will be"
             " verified"
         ),
     )
