@@ -459,7 +459,6 @@ def file_download(
             files=[ia_file_name],
             destdir=output_folder,
             on_the_fly=True,
-            silent=True,
             return_responses=True,
         )
         response = response_list[0]  # type: requests.Response
@@ -596,7 +595,6 @@ def file_download(
                                 files=[ia_file_name],
                                 destdir=output_folder,
                                 on_the_fly=True,
-                                silent=True,
                             )
                             break
                         except requests.exceptions.HTTPError as http_error:
@@ -668,7 +666,6 @@ def file_download(
                             files=[ia_file_name],
                             destdir=output_folder,
                             on_the_fly=True,
-                            silent=True,
                             return_responses=True,
                         )
                     except requests.exceptions.HTTPError as http_error:
