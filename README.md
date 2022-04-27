@@ -8,15 +8,21 @@ This Python script uses multithreading and multiprocessing in conjunction with t
 
 Python 3.7 or later is required, with the Internet Archive Python Library installed ([Internet Archive Python Library installation instructions](https://archive.org/services/docs/api/internetarchive/installation.html)).
 
-This script has been tested with macOS 11.3 (using Python >= 3.7 installed using [Homebrew](https://brew.sh/)), Ubuntu 20.04, and Windows 10 20H2.
+This script has been tested with macOS 11.6 (using Python >= 3.7 installed using [Homebrew](https://brew.sh/)), Ubuntu 20.04, and Windows 10 20H2.
 
-### Finding the Internet Archive item identifier(s)
+### Download options
 
-Internet Archive items and item identifiers are [defined within Internet Archive documentation](https://archive.org/services/docs/api/items.html) as:
+You can download individual Internet Archive item(s), and/or all items returned from an [archive.org search](https://archive.org/advancedsearch.php). An item is [defined within Internet Archive documentation](https://archive.org/services/docs/api/items.html) as:
 
-> Archive.org is made up of “items”. An item is a logical “thing” that we represent on one web page on archive.org. An item can be considered as a group of files ... an item can be a book, a song, an album, a dataset, a movie, an image or set of images, etc. Every item has an identifier that is unique across archive.org.
+> Archive.org is made up of “items”. An item is a logical “thing” that we represent on one web page on archive.org. An item can be considered as a group of files ... an item can be a book, a song, an album, a dataset, a movie, an image or set of images, etc.
 
-[Here is an example of a details page for an Internet Archive item](https://archive.org/details/gov.archives.arc.1155023) - in this example, the item identifier to use with this script is 'gov.archives.arc.1155023' (as listed in the URL, and by the 'Identifier' string on the item's details page).
+#### Downloading individual Internet Archive item(s)
+
+Downloading items individually requires finding the item's unique identifier. [Here is an example of a details page for an Internet Archive item](https://archive.org/details/gov.archives.arc.1155023) - in this example, the item identifier to use with this script is 'gov.archives.arc.1155023' (as listed in the URL, and by the 'Identifier' string on the item's details page).
+
+#### Downloading items returned from a search term
+
+Various item metadata fields can be searched, enabling flexible download options - such as downloading all items associated with a collection, and/or uploaded by a particular creator. A full list of fields is provided on the [archive.org advanced search page](https://archive.org/advancedsearch.php): it is recommended that the search term is built on the advanced search page, and after hitting the 'Search' button, the completed query can be copied across as an argument for this script.
 
 ## Responsible usage
 
@@ -32,22 +38,23 @@ This is the primary usage mode, allowing download of files associated with Inter
 
 Syntax:
 
-    python3 ia_downloader.py download identifiers [identifiers ...] output_folder [flags]
+    python3 ia_downloader.py download -i [identifiers ...] -s ["search terms"] -o output_folder [flags]
 
 Usage example:
 
-    python3 ia_downloader.py download gov.archives.arc.1155023 TourTheInternationalSpaceStation space_videos
+    python3 ia_downloader.py download -i gov.archives.arc.1155023 TourTheInternationalSpaceStation -s "collection:(nasa) AND date:1975-11-13" -o space_videos
 
-The above will `download` all files associated with Internet Archive items with identifiers `gov.archives.arc.1155023` and `TourTheInternationalSpaceStation` to folder `space_videos`.
-
-Internet Archive 'collections' (a special type of item that groups other items together, based on a theme) may also be specified as the identifier, using prefix `collection:`, e.g. `collection:nasa`. Each item within the collection will be downloaded in turn.
+The above will `download` all files associated with Internet Archive items with identifiers `gov.archives.arc.1155023`, `TourTheInternationalSpaceStation`, and the results of search term `"collection:(nasa) AND date:1975-11-13"`, to folder `space_videos`.
 
 The available flags can be viewed using: `python3 ia_downloader.py download --help`, and are as follows:
 
+- `-i [str ... str]` or `--identifiers [str ... str]`: Internet Archive item identifiers to download (see section above for where to find identifier strings on archive.org item pages).
+- `-s ["str" ... "str"]` or `--search ["str" ... "str"]`: search terms for which all returned Internet Archive items will be downloaded. Recommend building the search term using the [archive.org advanced search page](https://archive.org/advancedsearch.php). Use quotes to encapsulate each search term - Windows may be fussy with needing quote characters to be escaped, but try using brackets within your search rather than quotes to avoid this issue, e.g. `-s "creator:(National Archives and Records Administration) AND collection:(newsandpublicaffairs)"`.
+- `-o [str]` or `--output [str]`: output folder to store downloaded files in. If unspecified, default of `internet_archive_downloads` will be used.
 - `-t [int]` or `--threads [int]`: number of download threads (i.e. how many file downloads to perform simultaneously). The maximum is `5`, which is also the default if left unspecified.
 - `-v` or `--verify`: if used, as each download completes, an MD5 hash verification will be performed against the downloaded data and compared against the hash values listed in Internet Archive metadata. This provides confirmation that the file download completed successfully, and is recommended for large or interrupted/resumed file transfers. If you wanted to verify data in this way but forgot to use this flag, you can use the `verify` usage mode (detailed below) after the download completes.
 - `-r` or `--resume`: if used, interrupted file transfers will be restarted where they left off, rather than being started over from scratch. In testing, Internet Archive connections can be unstable, so this is recommended for large file transfers.
-- `-s [int]` or `--split [int]`: if used, the behaviour of downloads will change - instead of multiple files being downloaded simultaneously, only one file will be downloaded at a time, with each file over 10MB split into separate download threads (number of download threads is specified with this flag); each thread will download a separate portion of the file, and the file will be combined when all download threads complete. This may increase per-file download speeds, but will use more temporary storage space as files are downloaded. To avoid overloading Internet Archive servers, only one file will be downloaded at a time if this option is used (i.e. `-t` will be ignored). If using `-r` and the script has been restarted, use the same number of splits passed with this argument as was used during previous script execution. The maximum is `5`; the default is `1` (i.e. no file splitting will be performed).
+- `--split [int]`: if used, the behaviour of downloads will change - instead of multiple files being downloaded simultaneously, only one file will be downloaded at a time, with each file over 10MB split into separate download threads (number of download threads is specified with this flag); each thread will download a separate portion of the file, and the file will be combined when all download threads complete. This may increase per-file download speeds, but will use more temporary storage space as files are downloaded. To avoid overloading Internet Archive servers, only one file will be downloaded at a time if this option is used (i.e. `-t` will be ignored). If using `-r` and the script has been restarted, use the same number of splits passed with this argument as was used during previous script execution. The maximum is `5`; the default is `1` (i.e. no file splitting will be performed).
 - `-f [str ... str]` or `--filefilters [str ... str]`: one or more (space separated) file name filters; only files with names that contain any of the provided filter strings (case insensitive) will be downloaded. If multiple filters are provided, the search will be an 'OR' (i.e. only one of the provided strings needs to hit). For example, `-f png jpg` will download all files that contain either `png` or `jpg` in the file name. Individual terms can be wrapped in quotation marks.
 - `--invertfilefiltering`: when used with `filefilters` above, files matching the provided filter strings (case insensitive) will be excluded from download.
 - `-c [str] [str]` or `--credentials [str] [str]`: some Internet Archive items contain files that can only be accessed when logged in with an Internet Archive account. An email address and password can be supplied with this argument as two separate strings (email address first, then password - note that passwords containing spaces will need to be wrapped in quotation marks). Note that terminal history on your system may reveal your credentials to other users, and your credentials will be stored in a plaintext file in either `$HOME/.ia` or `$HOME/.config/ia.ini` as per [Internet Archive Python Library guidance](https://archive.org/services/docs/api/internetarchive/api.html#configuration). Credentials will be cached for future uses of this script (i.e. this flag only needs to be used once). Note that, if the Internet Archive item is [access restricted (e.g. books in the lending program, or 'stream only' videos),](https://help.archive.org/hc/en-us/articles/360016398872-Downloading-A-Basic-Guide-) downloads will still not be possible even if credentials are supplied ('403 Forbidden' messages will occur).
@@ -56,7 +63,7 @@ The available flags can be viewed using: `python3 ia_downloader.py download --he
 
 Usage example incorporating flags:
 
-    python3 ia_downloader.py download gov.archives.arc.1155023 space_videos -t 3 -v -r -f mpeg mp4 -c user@email.com Passw0rd --hashfile ia_metadata.txt
+    python3 ia_downloader.py download -i gov.archives.arc.1155023 -s "collection:(nasa) AND date:1975-11-13" -o space_videos -t 3 -v -r -f mpeg mp4 -c user@email.com Passw0rd --hashfile ia_metadata.txt
 
 ### Verify
 
