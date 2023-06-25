@@ -6,7 +6,7 @@ import multiprocessing.pool
 import os
 import pathlib
 import time
-from typing import Tuple, Optional, List
+from typing import Optional, List
 import internetarchive
 import requests
 from ia_downloader import file_paths_in_folder, hash_pool_initializer, verify, bytes_filesize_to_readable_str, file_download
@@ -40,9 +40,8 @@ def get_item_from_cache(
             now_datetime = datetime.datetime.now()
             if now_datetime - datetime.timedelta(weeks=1) <= file_datetime <= now_datetime:
                 log.debug(
-                    "Cached data from {} will be used for item '{}'".format(
-                        datetime_str, identifier
-                    )
+                    "Cached data from %s will be used for item '%s'",
+                    datetime_str, identifier
                 )
                 item = CacheDict()
                 item.item_metadata = {}
@@ -59,8 +58,9 @@ def get_item_from_cache(
                             item.item_metadata["files"].append(item_dict)
                     except ValueError:
                         log.info(
-                            "Cache file '{}' does not match expected format - cache data will"
-                            " be redownloaded".format(cache_file)
+                            "Cache file '%s' does not match expected format - cache data will"
+                            " be redownloaded",
+                            cache_file
                         )
                         return None
                 return item
@@ -83,24 +83,22 @@ def get_item_metadata(
                 )
                 if item_updated_time > (datetime.datetime.now() - datetime.timedelta(weeks=1)):
                     log.warning(
-                        "Internet Archive item '{}' was updated within the last week (last"
-                        " updated on {}) - verification/corruption issues may occur if"
+                        "Internet Archive item '%s' was updated within the last week (last"
+                        " updated on %s) - verification/corruption issues may occur if"
                         " files are being updated by the uploader. If such errors occur"
                         " when resuming a download, recommend using the '--cacherefresh'"
-                        " flag".format(
-                            identifier, item_updated_time.strftime("%Y-%m-%d %H:%M:%S")
-                        )
+                        " flag",
+                        identifier, item_updated_time.strftime("%Y-%m-%d %H:%M:%S")
                     )
         except requests.exceptions.ConnectionError:
             if connection_retry_counter < max_retries:
                 log.info(
                     "ConnectionError occurred when attempting to connect to Internet"
-                    " Archive to get info for item '{}' - is internet connection active?"
-                    " Waiting {} minutes before retrying (will retry {} more times)".format(
-                        identifier,
-                        int(connection_wait_timer / 60),
-                        max_retries - connection_retry_counter,
-                    )
+                    " Archive to get info for item '%s' - is internet connection active?"
+                    " Waiting %d minutes before retrying (will retry %d more times)",
+                    identifier,
+                    int(connection_wait_timer / 60),
+                    max_retries - connection_retry_counter
                 )
                 time.sleep(connection_wait_timer)
                 connection_retry_counter += 1
@@ -110,8 +108,9 @@ def get_item_metadata(
             else:
                 log.warning(
                     "ConnectionError persisted when attempting to connect to Internet"
-                    " Archive - is internet connection active? Download of item '{}' has"
-                    " failed".format(identifier)
+                    " Archive - is internet connection active? Download of item '%s' has"
+                    " failed",
+                    identifier
                 )
                 return None
         else:
@@ -171,13 +170,11 @@ def generate_download_queue(
         # or mtime data; the below will set a default size/mtime of '-1' where needed
         if "size" not in file:
             file["size"] = -1
-            log.debug("'{}' has no size metadata".format(file["name"]))
+            log.debug("'%s' has no size metadata", file["name"])
         if "mtime" not in file:
             file["mtime"] = -1
-            log.debug("'{}' has no mtime metadata".format(file["name"]))
-        log_write_str = "{}|{}|{}|{}|{}\n".format(
-            identifier, file["name"], file["size"], file["md5"], file["mtime"]
-        )
+            log.debug("'%s' has no mtime metadata", file["name"])
+        log_write_str = f"{identifier}|{file['name']}|{file['size']}|{file['md5']}|{file['mtime']}\n"
         if not isinstance(item, CacheDict):
             with open(metadata_folder, "w", encoding="UTF-8") as cache_file_handler:
                 cache_file_handler.write(log_write_str)
@@ -215,21 +212,18 @@ def check_file_filters(file_filters, file_name, invert_file_filtering):
     if file_filters is not None:
         if not invert_file_filtering:
             return any(substring.lower() in file_name.lower() for substring in file_filters)
-        else:
-            return not any(substring.lower() in file_name.lower() for substring in file_filters)
+        return not any(substring.lower() in file_name.lower() for substring in file_filters)
     return True
 
 
 def write_file_info(identifier, file, cache_file_handler, item, log):
     if "size" not in file:
         file["size"] = -1
-        log.debug("'{}' has no size metadata".format(file["name"]))
+        log.debug("'%s' has no size metadata", file["name"])
     if "mtime" not in file:
         file["mtime"] = -1
-        log.debug("'{}' has no mtime metadata".format(file["name"]))
-    log_write_str = "{}|{}|{}|{}|{}\n".format(
-        identifier, file["name"], file["size"], file["md5"], file["mtime"]
-    )
+        log.debug("'%s' has no mtime metadata", file["name"])
+    log_write_str = f"{identifier}|{file['name']}|{file['size']}|{file['md5']}|{file['mtime']}\n"
     if not isinstance(item, CacheDict):
         cache_file_handler.write(log_write_str)
     return log_write_str
@@ -337,9 +331,8 @@ def process_download_queue(identifier,
         )
         if size_verification:
             log.info(
-                "'{}' appears to have been fully downloaded in folder '{}' - skipping".format(
-                    identifier, output_folder
-                )
+                "'%s' appears to have been fully downloaded in folder '%s' - skipping",
+                identifier, output_folder
             )
             return
 
@@ -347,46 +340,45 @@ def process_download_queue(identifier,
         if not invert_file_filtering:
             if len(download_queue) > 0:
                 log.info(
-                    "{} files ({}) match file filter(s) '{}' (case insensitive) and will be"
-                    " downloaded (out of a total of {} files ({}) available)".format(
-                        len(download_queue),
-                        bytes_filesize_to_readable_str(item_filtered_files_size),
-                        " ".join(file_filters),
-                        item_file_count,
-                        bytes_filesize_to_readable_str(item_total_size),
-                    )
+                    "%d files (%s) match file filter(s) '%s' (case insensitive) and will be"
+                    " downloaded (out of a total of %d files (%s) available)",
+                    len(download_queue),
+                    bytes_filesize_to_readable_str(item_filtered_files_size),
+                    " ".join(file_filters),
+                    item_file_count,
+                    bytes_filesize_to_readable_str(item_total_size)
                 )
             else:
                 log.info(
-                    "No files match the filter(s) '{}' in item '{}' - no downloads will be"
-                    " performed".format(" ".join(file_filters), identifier)
+                    "No files match the filter(s) '%s' in item '%s' - no downloads will be"
+                    " performed",
+                    " ".join(file_filters), identifier
                 )
                 return
         else:
             if len(download_queue) > 0:
                 log.info(
-                    "{} files ({}) NOT matching file filter(s) '{}' (case insensitive) will"
-                    " be downloaded (out of a total of {} files ({}) available)".format(
-                        len(download_queue),
-                        bytes_filesize_to_readable_str(item_filtered_files_size),
-                        " ".join(file_filters),
-                        item_file_count,
-                        bytes_filesize_to_readable_str(item_total_size),
-                    )
+                    "%d files (%s) NOT matching file filter(s) '%s' (case insensitive) will"
+                    " be downloaded (out of a total of %d files (%s) available)",
+                    len(download_queue),
+                    bytes_filesize_to_readable_str(item_filtered_files_size),
+                    " ".join(file_filters),
+                    item_file_count,
+                    bytes_filesize_to_readable_str(item_total_size)
                 )
             else:
                 log.info(
-                    "All files are excluded by filter(s) '{}' in item '{}' - no downloads"
-                    " will be performed".format(" ".join(file_filters), identifier)
+                    "All files are excluded by filter(s) '%s' in item '%s' - no downloads"
+                    " will be performed",
+                    " ".join(file_filters), identifier
                 )
                 return
     else:
         log.info(
-            "'{}' contains {} files ({})".format(
-                identifier,
-                len(download_queue),
-                bytes_filesize_to_readable_str(item_total_size),
-            )
+            "'%s' contains %d files (%s)",
+            identifier,
+            len(download_queue),
+            bytes_filesize_to_readable_str(item_total_size)
         )
 
     with multiprocessing.pool.ThreadPool(thread_count) as download_pool:

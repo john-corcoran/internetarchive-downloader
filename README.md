@@ -30,7 +30,7 @@ Internet Archive is a non-profit organisation that is experiencing unprecedented
 
 ## Script usage
 
-The script has two usage modes, outlined below. For either mode, info/warning/error messages will be written to the console and to log files, by default created in folder `ia_downloader_logs` (folder location may be modified using flag `-l` or `--logfolder`, e.g. `python3 ia_downloader.py -l custom_log_folder`).
+The script has two usage modes, outlined below. For either mode, info/warning/error messages will be written to the console and to log files, by default created in folder `ia_downloader_logs` (folder location may be modified using flag `-l` or `--logfolder`, e.g. `python3 main.py -l custom_log_folder`).
 
 ### Download
 
@@ -38,11 +38,11 @@ This is the primary usage mode, allowing download of files associated with Inter
 
 Syntax:
 
-    python3 ia_downloader.py download -i [identifiers ...] -s ["search terms"] -o output_folder [flags]
+    python3 main.py download -i [identifiers ...] -s ["search terms"] -o output_folder [flags]
 
 Usage example:
 
-    python3 ia_downloader.py download -i gov.archives.arc.1155023 TourTheInternationalSpaceStation -s "collection:(nasa) AND date:1975-11-13" -o space_videos
+    python main.py download -i gov.archives.arc.1155023 TourTheInternationalSpaceStation -s "collection:(nasa) AND date:1975-11-13" -o space_videos
 
 The above will `download` all files associated with Internet Archive items with identifiers `gov.archives.arc.1155023`, `TourTheInternationalSpaceStation`, and the results of search term `"collection:(nasa) AND date:1975-11-13"`, to folder `space_videos`.
 

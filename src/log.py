@@ -1,5 +1,5 @@
 import os
-import typing
+from typing import Tuple, Dict, Any
 import argparse
 import logging
 import re
@@ -31,8 +31,16 @@ class MsgCounterHandler(logging.Handler):
         self.count[levelname] += 1
 
 
-class ColorFormatter(logging.Formatter):
+class TermEscapeCodeFilter:
+    """A class to strip the escape codes from log messages"""
+    escape_re = re.compile(r"\x1b\[[0-9;]*m")
 
+    @classmethod
+    def filter(cls, text):
+        return re.sub(cls.escape_re, "", text)
+
+
+class ColorFormatter(logging.Formatter):
     msg_format = "%(asctime)s - %(levelname)s - %(message)s"
 
     FORMATS = {
@@ -49,18 +57,9 @@ class ColorFormatter(logging.Formatter):
         return formatter.format(record)
 
 
-class TermEscapeCodeFilter(logging.Filter):
-    """A class to strip the escape codes from log messages destined for log files"""
-
-    def filter(self, record):
-        escape_re = re.compile(r"\x1b\[[0-9;]*m")
-        record.msg_without_colours = re.sub(escape_re, "", str(record.msg))
-        return True
-
-
 def prepare_logging(
-    datetime_string: str, folder_path: str, identifier: str, args: typing.Dict[str, typing.Any]
-) -> typing.Tuple[logging.Logger, MsgCounterHandler]:
+    datetime_string: str, folder_path: str, identifier: str, args: Dict[str, Any]
+) -> Tuple[logging.Logger, MsgCounterHandler]:
     """Prepare and return logging object to be used throughout script"""
     # INFO events and above will be written to both the console and a log file
     # DEBUG events and above will be written only to a (separate) log file
@@ -69,24 +68,27 @@ def prepare_logging(
     # 'Quiet' logger for when quiet flag used in functions
     quiet = logging.getLogger("quiet")
     quiet.setLevel(logging.ERROR)
-    log_file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(msg_without_colours)s")
-    log_file_filter = TermEscapeCodeFilter()
+
+    log_file_formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+
     debug_log = logging.FileHandler(
         os.path.join(folder_path, f"{datetime_string}_{identifier}_debug.log")
     )
     debug_log.setLevel(logging.DEBUG)
     debug_log.setFormatter(log_file_formatter)
-    debug_log.addFilter(log_file_filter)
+
     info_log = logging.FileHandler(
         os.path.join(folder_path, f"{datetime_string}_{identifier}_info.log")
     )
     info_log.setLevel(logging.INFO)
     info_log.setFormatter(log_file_formatter)
-    info_log.addFilter(log_file_filter)
+
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(ColorFormatter())
+
     counter_handler = MsgCounterHandler()
+
     log.addHandler(debug_log)
     log.addHandler(info_log)
     log.addHandler(console_handler)
