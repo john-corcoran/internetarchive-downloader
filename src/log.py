@@ -14,6 +14,21 @@ RED = "\x1b[31;20m"
 BOLD_RED = "\x1b[31;1m"
 RESET = "\x1b[0m"
 
+import inspect
+import functools
+
+
+def debug_decorator(func):
+    @functools.wraps(func)
+    def wrapper_debug(*args, **kwargs):
+        # Get the name of the function from which this is called
+        caller_name = inspect.stack()[1].function
+
+        print(f"Called function {func.__name__} from function {caller_name}")
+        
+        # Call the function being decorated and return the result
+        return func(*args, **kwargs)
+    return wrapper_debug
 
 class MsgCounterHandler(logging.Handler):
     """Custom logging handler to count number of calls per log level"""

@@ -1,0 +1,17 @@
+---
+  # 'download' or 'verify'
+  command: "download"
+  logfolder: "ia_downloader_logs"
+  identifiers: ["gov.archives.arc.1155023"]
+  search: ""
+  threads: 5
+  verify: False
+  split: 1
+  filefilters: ['mp3', 'wav', 'flac']
+  invertfilefiltering: False
+  credentials: null
+  hashfile: null
+  cacherefresh: False
+  data_folders: []
+  nopaths: False
+  resume: False
