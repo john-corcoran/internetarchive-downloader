@@ -82,6 +82,8 @@ class DownloadQueue:
             if self.item.is_empty:
                 with open(metadata_folder, "w", encoding="UTF-8") as cache_file_handler:
                     cache_file_handler.write(log_write_str)
+            # TODO: Unnecessarily complicated? Also, why are we skipping if no files are valid, but
+            # if some of them are, we don't seem to filter at all?
             if file_filters is not None:
                 if not invert_file_filtering:
                     if not any(
@@ -89,7 +91,7 @@ class DownloadQueue:
                     ):
                         continue
                 else:
-                    if any(substring.lower() in file["name"].lower() for substring in file_filters):
+                    if all(substring.lower() in file["name"].lower() for substring in file_filters):
                         continue
             if file["size"] != -1:
                 item_filtered_files_size += int(file["size"])
@@ -98,12 +100,12 @@ class DownloadQueue:
 
             self.download_queue.append(
                 DownloadJob(
-                    identifier,
-                    file["name"],
-                    int(file["size"]),
-                    file["md5"],
-                    int(file["mtime"]),
-                    split_count
+                    identifier=identifier,
+                    ia_file_name=file["name"],
+                    file_size=int(file["size"]),
+                    md5=file["md5"],
+                    mtime=int(file["mtime"]),
+                    split_count=split_count
                 )
             )
 
@@ -176,15 +178,16 @@ class DownloadQueue:
                 bytes_filesize_to_readable_str(self.item_total_size)
             )
 
+        #TODO: Find out where bytes_range (and chunk_number) comes from (and what it does)
         with ThreadPool(thread_count) as download_pool:
             download_detail_list = [(
                 job.identifier,
                 job.ia_file_name,
-                job.ia_file_size,
-                job.ia_md5,
-                job.ia_mtime,
+                job.file_size,
+                job.md5,
+                job.mtime,
                 self.output_folder,
-                job.hash_pool,
+                self.hash_pool,
                 self.resume_flag,
                 job.split_count,
                 job.bytes_range,
@@ -212,18 +215,17 @@ class DownloadQueue:
 
 
 class DownloadJob:
-    
     def __init__(
             self,
             identifier,
-            name,
+            ia_file_name,
             file_size,
             md5,
             mtime,
             split_count
         ):
         self.identifier = identifier
-        self.name = name
+        self.ia_file_name = ia_file_name
         self.file_size = file_size
         self.md5 = md5
         self.mtime = mtime
