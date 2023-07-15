@@ -67,7 +67,7 @@ def download(
         log=log
     )
 
-    if item is item.is_empty:
+    if item.is_empty:
         item = MetadataItem.from_internet_archive(
             identifier=identifier,
             max_retries=5,
