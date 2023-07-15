@@ -15,10 +15,9 @@ import typing
 import internetarchive
 import requests
 import tqdm
-from src.log import BOLD_GREY, BLUE, GREEN, debug_decorator
+from src.log import BOLD_GREY, BLUE, GREEN
 
 
-@debug_decorator
 def bytes_filesize_to_readable_str(bytes_filesize: int) -> str:
     """Convert bytes integer to kilobyte/megabyte/gigabyte/terabyte equivalent string"""
     if bytes_filesize < 1024:
@@ -31,7 +30,6 @@ def bytes_filesize_to_readable_str(bytes_filesize: int) -> str:
     return "{:.1f} {}".format(num, "TB")
 
 
-@debug_decorator
 def file_paths_in_folder(folder_path: str) -> typing.List[str]:
     """Return sorted list of paths of files at a directory (and its subdirectories)"""
     log = logging.getLogger(__name__)
@@ -51,7 +49,6 @@ def file_paths_in_folder(folder_path: str) -> typing.List[str]:
     return sorted(file_paths)
 
 
-@debug_decorator
 def get_metadata_from_hashfile(
     hash_file_path: str,
     hash_flag: bool,
@@ -85,7 +82,6 @@ def get_metadata_from_hashfile(
     return results
 
 
-@debug_decorator
 def get_metadata_from_files_in_folder(
     folder_path: str,
     hash_flag: bool,
@@ -133,7 +129,6 @@ def get_metadata_from_files_in_folder(
     return results
 
 
-@debug_decorator
 def md5_hash_file(filepath: str) -> str:
     """Return str containing lowercase MD5 hash value of file at a file path"""
     block_size = 64 * 1024
@@ -147,7 +142,6 @@ def md5_hash_file(filepath: str) -> str:
     return md5.hexdigest()
 
 
-@debug_decorator
 def get_safe_path_name(path_name: str) -> str:
     """Return the provided file_name string with all non alphanumeric characters removed"""
 
@@ -160,7 +154,6 @@ def get_safe_path_name(path_name: str) -> str:
     return "".join(safe_char(char) for char in path_name).rstrip("_")
 
 
-@debug_decorator
 def hash_pool_initializer() -> None:
     """Ignore CTRL+C in the hash worker processes (workers are daemonic so will close when the
     main process terminates)
@@ -205,7 +198,6 @@ def check_hash(file_path: str, md5_value_from_ia: str) -> typing.Tuple[str, str]
     )
 
 
-@debug_decorator
 def log_update_callback(result: typing.List[typing.Tuple[str, str]]) -> None:
     """Function invoked when a hash operation completes; takes result of check_hash and adds to
     log
@@ -216,7 +208,6 @@ def log_update_callback(result: typing.List[typing.Tuple[str, str]]) -> None:
     getattr(log, log_level)(log_message)
 
 
-@debug_decorator
 def does_file_have_416_issue(file_path: str) -> bool:
     """Check to see if a file has an embedded '416 status' error in its tail
 
@@ -239,7 +230,6 @@ def does_file_have_416_issue(file_path: str) -> bool:
     return False
 
 
-@debug_decorator
 def file_download(
     download_details: typing.Tuple[
         str,
@@ -773,7 +763,6 @@ def file_download(
                 )
 
 
-@debug_decorator
 def verify(
     hash_file: typing.Optional[str],
     data_folders: str,

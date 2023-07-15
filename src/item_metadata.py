@@ -5,13 +5,11 @@ import time
 from typing import Optional, Type
 import internetarchive
 import requests
-from src.log import debug_decorator
 
 
 class MetadataItem:
     """Using this simply to allow for a custom attribute (item_metadata) if we use cache"""
 
-    @debug_decorator
     def __init__(
             self,
             item_metadata: Optional[dict] = None,
@@ -26,7 +24,6 @@ class MetadataItem:
             self.is_empty = is_empty
 
     @classmethod
-    @debug_decorator
     def from_cache(
         cls: Type['MetadataItem'],
         identifier: str,
@@ -80,7 +77,6 @@ class MetadataItem:
         return MetadataItem(is_empty=True)
 
     @classmethod
-    @debug_decorator
     def from_internet_archive(
         cls: Type['MetadataItem'],
         identifier: str,
@@ -94,6 +90,7 @@ class MetadataItem:
         connection_wait_timer = 600
         while True:
             try:
+                # Get Internet Archive metadata for the provided identifier
                 item = MetadataItem(
                     internetarchive_item=internetarchive.get_item(identifier))
                 if "item_last_updated" in item.item_metadata:
@@ -132,6 +129,7 @@ class MetadataItem:
                         identifier
                     )
                     return MetadataItem(is_empty=True)
+            # If no further errors, break from the True loop
             else:
                 break
-        return MetadataItem(is_empty=True)
+        return item

@@ -4,12 +4,10 @@ from datetime import datetime
 import logging
 from src.ia_downloader import file_paths_in_folder, verify, bytes_filesize_to_readable_str, file_download
 from src.item_metadata import MetadataItem
-from src.log import debug_decorator
 
 
 class DownloadQueue:
 
-    @debug_decorator
     def __init__(
         self,
         item: MetadataItem,
@@ -112,7 +110,6 @@ class DownloadQueue:
         self.item_total_size = item_total_size
         self.item_filtered_files_size = item_filtered_files_size
 
-    @debug_decorator
     def process(self, thread_count):
         identifier_output_folder = os.path.join(self.output_folder, self.identifier)
         if os.path.isdir(identifier_output_folder) and len(file_paths_in_folder(identifier_output_folder)) > 0:

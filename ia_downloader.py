@@ -26,7 +26,7 @@ def main() -> None:
         datetime_string,
         os.path.join(args.logfolder, "logs"),
         "ia_downloader",
-        args,
+        args
     )
     if args.filefilters is None and args.invertfilefiltering:
         log.warning("--invertfilefiltering flag will be ignored as no file filters were provided")
