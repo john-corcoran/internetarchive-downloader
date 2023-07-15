@@ -79,7 +79,20 @@ class ConfigArgs:
         assert len(args["identifiers"]) > 0
         assert isinstance(args["identifiers"], list)
         assert all(isinstance(identifier, str) for identifier in args["identifiers"])
+        assert isinstance(args["search"], str)
+        assert args["threads"] <= 5 #Reason: Reduce iarchive server load
+        assert isinstance(args["verify"], bool)
+        assert args["split"] <= 5 #Reason: Reduce iarchive server load
+        assert (args["split"] > 1 & args["threads"] == 1) or args["split"] == 1
         assert (args["credentials"] is None or len(args) == 2)
+        assert isinstance(args["filefilters"], list) | isinstance(args["filefilters"], str)
+        assert isinstance(args["invertfilefiltering"], bool)
+        #assert credentials
+        #assert hashfile
+        assert isinstance(args["cacherefresh"], bool)
+        assert isinstance(args["nopaths"], bool)
+        assert isinstance(args["resume"], bool)
+        #assert data_folders
         #TODO
 
     def _verify_args(self, args):
@@ -88,3 +101,5 @@ class ConfigArgs:
 
     def __contains__(self, item):
         return hasattr(self, item) and self.__getattribute__(item) is not None
+
+

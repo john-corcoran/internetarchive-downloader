@@ -30,10 +30,6 @@ def main() -> None:
     )
     if args.filefilters is None and args.invertfilefiltering:
         log.warning("--invertfilefiltering flag will be ignored as no file filters were provided")
-    log.info(
-        "Internet Archive is a non-profit organisation that is experiencing unprecedented service"
-        " demand. Please consider making a donation: https://archive.org/donate"
-    )
     log.info("Logs will be stored in folder '%s'", args.logfolder)
 
     if args.command == "download":
@@ -55,20 +51,6 @@ def main() -> None:
                 "Internet Archive metadata will be written to hash file at '%s'",
                 args.hashfile
             )
-        if args.threads > 5 or args.split > 5:
-            log.info(
-                "Reducing download threads to 5, to optimise script performance and reduce"
-                " Internet Archive server load"
-            )
-            args.threads = min(args.threads, 5)
-            args.split = min(args.split, 5)
-        if args.split > 1:
-            if args.threads > 1:
-                log.info(
-                    "While using file splitting, only one file will be downloaded at a time so"
-                    " as to not overwhelm Internet Archive servers"
-                )
-                args.threads = 1
         hashfile_file_handler = None
         if args.hashfile:
             hashfile_file_handler = open(args.hashfile, "w", encoding="UTF-8")
