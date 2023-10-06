@@ -3,6 +3,7 @@
 """Script to perform simultaneous, resumable and hash-verified downloads from Internet Archive"""
 
 import argparse
+from dataclasses import dataclass, field
 import datetime
 import hashlib
 import io
@@ -66,7 +67,6 @@ class MsgCounterHandler(logging.Handler):
 
 
 class ColorFormatter(logging.Formatter):
-
     msg_format = "%(asctime)s - %(levelname)s - %(message)s"
 
     FORMATS = {
@@ -137,9 +137,7 @@ def prepare_logging(
     for platform_detail_request in platform_detail_requests:
         try:
             log.debug(
-                "{}: {}".format(
-                    platform_detail_request, getattr(platform, platform_detail_request)()
-                )
+                "%s: %s", platform_detail_request, getattr(platform, platform_detail_request)()
             )
         except:  # pylint: disable=W0702
             pass
@@ -147,7 +145,7 @@ def prepare_logging(
     if "credentials" in args:
         if args["credentials"] is not None:
             args["credentials"] = ["***", "***"]
-    log.debug("commandline_args: {}".format(args))
+    log.debug("commandline_args: %s", args)
     return log, counter_handler
 
 
@@ -178,8 +176,10 @@ def file_paths_in_folder(folder_path: str) -> typing.List[str]:
     def walk_error(os_error: OSError) -> None:
         """Log any errors occurring during os.walk"""
         log.warning(
-            "'%s' could not be accessed during folder scanning - any contents will not be"
-            " processed. Try running script as admin",
+            (
+                "'%s' could not be accessed during folder scanning - any contents will not be"
+                " processed. Try running script as admin"
+            ),
             os_error.filename,
         )
 
@@ -201,7 +201,7 @@ def get_metadata_from_hashfile(
     results = {}  # type: typing.Dict[str, str]
     with open(hash_file_path, "r", encoding="utf-8") as file_handler:
         for line in file_handler:
-            identifier, file_path, size, md5, mtime = line.strip().split("|")
+            identifier, file_path, size, md5, _ = line.strip().split("|")
             if file_filters is not None:
                 if not invert_file_filtering:
                     if not any(
@@ -248,8 +248,10 @@ def get_metadata_from_files_in_folder(
                     ] = md5.lower().strip()
                 except (PermissionError, OSError):
                     log.warning(
-                        "PermissionError/OSError occurred when accessing file '%s' - try running "
-                        "script as admin",
+                        (
+                            "PermissionError/OSError occurred when accessing file '%s' - try"
+                            " running script as admin"
+                        ),
                         file_path,
                     )
     else:
@@ -263,8 +265,10 @@ def get_metadata_from_files_in_folder(
                     )
                 except (PermissionError, OSError):
                     log.warning(
-                        "PermissionError/OSError occurred when accessing file '%s' - try running "
-                        "script as admin",
+                        (
+                            "PermissionError/OSError occurred when accessing file '%s' - try"
+                            " running script as admin"
+                        ),
                         file_path,
                     )
     return results
@@ -411,7 +415,7 @@ def file_download(
     dest_file_name = ia_file_name
     expected_file_size = ia_file_size
     # If our thread is part of a file split, update expectations on file paths/names and sizes
-    if chunk_number is not None:
+    if bytes_range is not None and chunk_number is not None:
         dest_file_path += ".{}".format(chunk_number)
         dest_file_name = os.path.basename(dest_file_path)
         expected_file_size = bytes_range[1] - bytes_range[0] + 1
@@ -425,41 +429,56 @@ def file_download(
             initial_file_size = os.path.getsize(dest_file_path)
             if initial_file_size == expected_file_size:
                 log.debug(
-                    "'{}' - will be skipped as file with expected file size already present at '{}'"
-                    .format(dest_file_name, dest_file_path)
+                    (
+                        "'%s' - will be skipped as file with expected file size already present at"
+                        " '%s'"
+                    ),
+                    dest_file_name,
+                    dest_file_path,
                 )
                 return
             else:
                 if initial_file_size < expected_file_size:
                     if resume_flag:
                         log.info(
-                            "'{}' - exists as downloaded file '{}' but file size indicates download"
-                            " was not completed; will be resumed ({:.1%} remaining)".format(
-                                dest_file_name,
-                                dest_file_path,
-                                1 - (initial_file_size / expected_file_size),
-                            )
+                            (
+                                "'%s' - exists as downloaded file '%s' but file size indicates"
+                                " download was not completed; will be resumed (%.1f%% remaining)"
+                            ),
+                            dest_file_name,
+                            dest_file_path,
+                            (1 - (initial_file_size / expected_file_size)) * 100,
                         )
+
                     else:
                         log.info(
-                            "'{}' - exists as downloaded file '{}' but file size indicates download"
-                            " was not completed; will be redownloaded".format(
-                                dest_file_name, dest_file_path
-                            )
+                            (
+                                "'%s' - exists as downloaded file '%s' but file size indicates"
+                                " download was not completed; will be redownloaded"
+                            ),
+                            dest_file_name,
+                            dest_file_path,
                         )
+
                 else:
                     log.warning(
-                        "'{}' - exists as downloaded file '{}', but with a larger file size than"
-                        " expected - was the file modified (either locally or on Internet Archive)"
-                        " since it was downloaded?".format(dest_file_name, dest_file_path)
+                        (
+                            "'%s' - exists as downloaded file '%s', but with a larger file size"
+                            " than expected - was the file modified (either locally or on Internet"
+                            " Archive) since it was downloaded?"
+                        ),
+                        dest_file_name,
+                        dest_file_path,
                     )
                     return
         else:
             log.info(
-                "'{}' - exists as downloaded file '{}' but file size metadata unavailable from IA"
-                " to confirm whether file size is as expected; will be redownloaded".format(
-                    dest_file_name, dest_file_path
-                )
+                (
+                    "'%s' - exists as downloaded file '%s' but file size metadata unavailable from"
+                    " IA to confirm whether file size is as expected; will be redownloaded"
+                ),
+                dest_file_name,
+                dest_file_path,
             )
 
     # If this thread is expected to create new threads for split file downloading, first need to
@@ -468,36 +487,60 @@ def file_download(
     if split_count > 1 and ia_file_size > file_size_split_limit:
         response_list = internetarchive.download(
             identifier,
-            files=[ia_file_name],
+            files=[ia_file_name],  # type: ignore
             destdir=output_folder,
             on_the_fly=True,
             return_responses=True,
         )
-        response = response_list[0]  # type: requests.Response
-        request = response.request  # type: requests.PreparedRequest
-        headers = request.headers
-        # We're just testing this connection, so don't need the whole byte range
-        headers["Range"] = "bytes={}-{}".format(0, 10)
+        if isinstance(response_list[0], requests.Response):
+            thread_test_response = response_list[0]  # type: requests.Response
+            thread_test_request = thread_test_response.request  # type: requests.PreparedRequest
+            headers = thread_test_request.headers
+            # We're just testing this connection, so don't need the whole byte range
+            headers["Range"] = "bytes={}-{}".format(0, 10)
 
-        new_response = requests.get(request.url, headers=headers, timeout=12, stream=True)
+            if thread_test_request.url is not None:
+                new_response = requests.get(
+                    thread_test_request.url, headers=headers, timeout=12, stream=True
+                )
 
-        if new_response.status_code == 206:
-            log.debug(
-                "'{}' - returns a 206 status when requesting a Range - can therefore split download"
-                .format(ia_file_name)
-            )
-        elif new_response.status_code == 200:
-            log.debug(
-                "'{}' - returns a 200 status when requesting a Range - download will not be split"
-                .format(ia_file_name)
-            )
-            split_count = 1
+                if new_response.status_code == 206:
+                    log.debug(
+                        (
+                            "'%s' - returns a 206 status when requesting a Range - can therefore"
+                            " split download"
+                        ),
+                        ia_file_name,
+                    )
+                elif new_response.status_code == 200:
+                    log.debug(
+                        (
+                            "'%s' - returns a 200 status when requesting a Range - download will"
+                            " not be split"
+                        ),
+                        ia_file_name,
+                    )
+                    split_count = 1
+                else:
+                    log.info(
+                        (
+                            "'%s' - unexpected status code %s returned when testing file splitting"
+                            " - download will be attempted without splitting"
+                        ),
+                        ia_file_name,
+                        new_response.status_code,
+                    )
+                    split_count = 1
+            else:
+                log.info(
+                    "Unexpected response data returned from internetarchive package; download will"
+                    " not be split"
+                )
+                split_count = 1
         else:
             log.info(
-                "'{}' - unexpected status code {} returned when testing file splitting -"
-                " download will be attempted without splitting".format(
-                    ia_file_name, new_response.status_code
-                )
+                "Unexpected response data returned from internetarchive package; download will not"
+                " be split"
             )
             split_count = 1
 
@@ -537,7 +580,7 @@ def file_download(
 
         with multiprocessing.pool.ThreadPool(split_count) as download_pool:
             # Chunksize 1 used to ensure downloads occur in filename order
-            log.info("'{}' - will be downloaded in {} parts".format(ia_file_name, split_count))
+            log.info("'%s' - will be downloaded in %s parts", ia_file_name, split_count)
             download_pool.map(file_download, download_queue, chunksize=1)
             download_pool.close()
             download_pool.join()
@@ -550,28 +593,33 @@ def file_download(
 
             if not os.path.isfile(chunk_file_path):
                 log.warning(
-                    "'{}' - chunk {} (sub-file '{}') cannot be found".format(
-                        ia_file_name, chunk_counter, chunk_file_path
-                    )
+                    "'%s' - chunk %s (sub-file '%s') cannot be found",
+                    ia_file_name,
+                    chunk_counter,
+                    chunk_file_path,
                 )
                 failed_indicator = True
             elif os.path.getsize(chunk_file_path) != chunk_sizes[chunk_counter]:
                 log.warning(
-                    "'{}' - chunk {} (sub-file '{}') is not the expected size (expected size {},"
-                    " actual size {})".format(
-                        ia_file_name,
-                        chunk_counter,
-                        chunk_file_path,
-                        chunk_sizes[chunk_counter],
-                        os.path.getsize(chunk_file_path),
-                    )
+                    (
+                        "'%s' - chunk %s (sub-file '%s') is not the expected size (expected size"
+                        " %s, actual size %s)"
+                    ),
+                    ia_file_name,
+                    chunk_counter,
+                    chunk_file_path,
+                    chunk_sizes[chunk_counter],
+                    os.path.getsize(chunk_file_path),
                 )
                 failed_indicator = True
 
         if failed_indicator:
             log.warning(
-                "'{}' - error occurred with file chunks - file could not be reconstructed"
-                " and has therefore not been downloaded successfully".format(ia_file_name)
+                (
+                    "'%s' - error occurred with file chunks - file could not be reconstructed"
+                    " and has therefore not been downloaded successfully"
+                ),
+                ia_file_name,
             )
         else:
             # Merge the chunks into the final file and delete each chunk as we go
@@ -597,14 +645,12 @@ def file_download(
         while True:
             try:
                 if not resume_flag and chunk_number is None:
-                    log.info(
-                        "{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue)
-                    )
+                    log.info("%s'%s'%s - beginning download", bold_grey, dest_file_name, blue)
                     while True:
                         try:
                             internetarchive.download(
                                 identifier,
-                                files=[ia_file_name],
+                                files=[ia_file_name],  # type: ignore
                                 destdir=output_folder,
                                 on_the_fly=True,
                             )
@@ -613,24 +659,30 @@ def file_download(
                             status_code = http_error.response.status_code
                             if status_code == 403:
                                 log.warning(
-                                    "'{}' - 403 Forbidden error occurred - an account login may be"
-                                    " required to access this file (account details can be passed"
-                                    " using the '-c' flag) - note that download may not be possible"
-                                    " even when logged in, if the file is within a restricted"
-                                    " access item (e.g. books in the lending program or 'stream"
-                                    " only' videos)".format(ia_file_name)
+                                    (
+                                        "'%s' - 403 Forbidden error occurred - an account login may"
+                                        " be required to access this file (account details can be"
+                                        " passed using the '-c' flag) - note that download may not"
+                                        " be possible even when logged in, if the file is within a"
+                                        " restricted access item (e.g. books in the lending program"
+                                        " or 'stream only' videos)"
+                                    ),
+                                    ia_file_name,
                                 )
                             else:
                                 log.warning(
-                                    "'{}' - {} error status returned when attempting download"
-                                    .format(ia_file_name, status_code)
+                                    "'%s' - %s error status returned when attempting download",
+                                    ia_file_name,
+                                    status_code,
                                 )
                             return
                         except FileExistsError:
                             log.debug(
-                                "FileExistsError for '{}' occurred - this seems to happen"
-                                " occasionally on Windows and Ubuntu, but a retry seems to fix"
-                                .format(ia_file_name)
+                                (
+                                    "FileExistsError for '%s' occurred - this seems to happen"
+                                    " occasionally on Windows and Ubuntu, but a retry seems to fix"
+                                ),
+                                ia_file_name,
                             )
                             time.sleep(2)
                 else:
@@ -644,23 +696,17 @@ def file_download(
                             # wasting time to calc hash as there'll always be a mismatch requiring
                             # a full re-download)
                             log.info(
-                                "{}'{}'{} - beginning re-download".format(
-                                    bold_grey, dest_file_name, blue
-                                )
+                                "%s'%s'%s - beginning re-download", bold_grey, dest_file_name, blue
                             )
                             file_write_mode = "wb"
                         elif resume_flag:
                             log.info(
-                                "{}'{}'{} - resuming download".format(
-                                    bold_grey, dest_file_name, blue
-                                )
+                                "%s'%s'%s - resuming download", bold_grey, dest_file_name, blue
                             )
                             file_write_mode = "ab"
                             partial_file_size = os.path.getsize(dest_file_path)
                     else:
-                        log.info(
-                            "{}'{}'{} - beginning download".format(bold_grey, dest_file_name, blue)
-                        )
+                        log.info("%s'%s'%s - beginning download", bold_grey, dest_file_name, blue)
                         file_write_mode = "wb"
                         pathlib.Path(os.path.dirname(dest_file_path)).mkdir(
                             parents=True, exist_ok=True
@@ -675,7 +721,7 @@ def file_download(
                     try:
                         response_list = internetarchive.download(
                             identifier,
-                            files=[ia_file_name],
+                            files=[ia_file_name],  # type: ignore
                             destdir=output_folder,
                             on_the_fly=True,
                             return_responses=True,
@@ -684,17 +730,22 @@ def file_download(
                         status_code = http_error.response.status_code
                         if status_code == 403:
                             log.warning(
-                                "'{}' - 403 Forbidden error occurred - an account login may be"
-                                " required to access this file (account details can be passed using"
-                                " the '-c' flag) - note that download may not be possible even when"
-                                " logged in, if the file is within a restricted access item (e.g."
-                                " books in the lending program)".format(ia_file_name)
+                                (
+                                    "'%s' - 403 Forbidden error occurred - an account login may be"
+                                    " required to access this file (account details can be passed"
+                                    " using the '-c' flag) - note that download may not be possible"
+                                    " even when logged in, if the file is within a restricted"
+                                    " access item (e.g. books in the lending program)"
+                                ),
+                                ia_file_name,
                             )
                         else:
                             log.warning(
-                                "'{}' - {} error status returned".format(ia_file_name, status_code)
+                                "'%s' - %s error status returned", ia_file_name, status_code
                             )
                         return
+                    if not isinstance(response_list[0], requests.Response):
+                        raise ConnectionError(response_list[0])  # This should be an error message
                     response = response_list[0]  # type: requests.Response
                     request = response.request  # type: requests.PreparedRequest
                     headers = request.headers
@@ -720,23 +771,29 @@ def file_download(
                             updated_bytes_range[0], updated_bytes_range[1]
                         )
                         log.debug(
-                            "'{}' - range to be requested (being downloaded as file"
-                            " '{}') is {}-{}".format(
-                                ia_file_name,
-                                dest_file_name,
-                                updated_bytes_range[0],
-                                updated_bytes_range[1],
-                            )
+                            "'%s' - range to be requested (being downloaded as file '%s') is %s-%s",
+                            ia_file_name,
+                            dest_file_name,
+                            updated_bytes_range[0],
+                            updated_bytes_range[1],
                         )
 
-                    new_response = requests.get(
-                        request.url, headers=headers, timeout=12, stream=True
-                    )
+                    if request.url is not None:
+                        new_response = requests.get(
+                            request.url, headers=headers, timeout=12, stream=True
+                        )
+                    else:
+                        log.warning(
+                            "Unexpected response data returned from internetarchive package;"
+                            " download not completed"
+                        )
+                        return
 
                     log.debug(
-                        "'{}' - {} status for request (being downloaded as file '{}')".format(
-                            ia_file_name, new_response.status_code, dest_file_name
-                        )
+                        "'%s' - %s status for request (being downloaded as file '%s')",
+                        ia_file_name,
+                        new_response.status_code,
+                        dest_file_name,
                     )
 
                     if new_response.status_code == 200 or new_response.status_code == 206:
@@ -760,22 +817,26 @@ def file_download(
                         if os.path.isfile(dest_file_path):
                             if does_file_have_416_issue(dest_file_path):
                                 log.info(
-                                    "416 error message has been embedded in partially downloaded"
-                                    " file '{}', causing file corruption; the partially downloaded"
-                                    " file will be deleted".format(dest_file_name)
+                                    (
+                                        "416 error message has been embedded in partially"
+                                        " downloaded file '%s', causing file corruption; the"
+                                        " partially downloaded file will be deleted"
+                                    ),
+                                    dest_file_name,
                                 )
                                 os.remove(dest_file_path)
                         if size_retry_counter < MAX_RETRIES:
                             log.info(
-                                "416 status returned for request for IA file '{}' (being downloaded"
-                                " as file '{}') - indicating that the IA server cannot proceed with"
-                                " resumed download at this time - waiting {} minutes before"
-                                " retrying (will retry {} more times)".format(
-                                    ia_file_name,
-                                    dest_file_name,
-                                    int(size_wait_timer / 60),
-                                    MAX_RETRIES - size_retry_counter,
-                                )
+                                (
+                                    "416 status returned for request for IA file '%s' (being"
+                                    " downloaded as file '%s') - indicating that the IA server"
+                                    " cannot proceed with resumed download at this time - waiting"
+                                    " %s minutes before retrying (will retry %s more times)"
+                                ),
+                                ia_file_name,
+                                dest_file_name,
+                                int(size_wait_timer / 60),
+                                MAX_RETRIES - size_retry_counter,
                             )
 
                             time.sleep(size_wait_timer)
@@ -786,29 +847,41 @@ def file_download(
                             )
                             continue
                         log.warning(
-                            "Persistent 416 statuses returned for IA file '{}' (being downloaded as"
-                            " file '{}') - server may be having temporary issues; download not"
-                            " completed".format(ia_file_name, dest_file_name)
+                            (
+                                "Persistent 416 statuses returned for IA file '%s' (being"
+                                " downloaded as file '%s') - server may be having temporary issues;"
+                                " download not completed"
+                            ),
+                            ia_file_name,
+                            dest_file_name,
                         )
                         return
                     else:
                         log.warning(
-                            "Unexpected status code {} returned for IA file '{}' (being downloaded"
-                            " as file '{}') - download not completed".format(
-                                new_response.status_code, ia_file_name, dest_file_name
-                            )
+                            (
+                                "Unexpected status code %s returned for IA file '%s' (being"
+                                " downloaded as file '%s') - download not completed"
+                            ),
+                            new_response.status_code,
+                            ia_file_name,
+                            dest_file_name,
                         )
                         return
 
-            except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
+            except (
+                requests.exceptions.ConnectionError,
+                requests.exceptions.ReadTimeout,
+                ConnectionError,
+            ):
                 if connection_retry_counter < MAX_RETRIES:
                     log.info(
-                        "ConnectionError/ReadTimeout occurred for '{}', waiting {} minutes before"
-                        " retrying (will retry {} more times)".format(
-                            dest_file_name,
-                            int(connection_wait_timer / 60),
-                            MAX_RETRIES - connection_retry_counter,
-                        )
+                        (
+                            "ConnectionError/ReadTimeout occurred for '%s', waiting %s minutes"
+                            " before retrying (will retry %s more times)"
+                        ),
+                        dest_file_name,
+                        int(connection_wait_timer / 60),
+                        MAX_RETRIES - connection_retry_counter,
                     )
                     time.sleep(connection_wait_timer)
                     connection_retry_counter += 1
@@ -817,8 +890,12 @@ def file_download(
                     )
                 else:
                     log.warning(
-                        "'{}' - download timed out {} times; this file has not been downloaded"
-                        " successfully".format(dest_file_name, MAX_RETRIES)
+                        (
+                            "'%s' - download timed out %s times; this file has not been downloaded"
+                            " successfully"
+                        ),
+                        dest_file_name,
+                        MAX_RETRIES,
                     )
                     return
 
@@ -839,19 +916,20 @@ def file_download(
                 if ia_file_size != -1 and downloaded_file_size < expected_file_size:
                     if size_retry_counter < MAX_RETRIES:
                         log.info(
-                            "File '{}' download concluded but file size is not as expected (file"
-                            " size is {} bytes, expected {} bytes). {} - partially downloaded file"
-                            " will be deleted. Waiting {} minutes before retrying (will retry {}"
-                            " more times)".format(
-                                dest_file_name,
-                                downloaded_file_size,
-                                expected_file_size,
-                                "The server raised a 416 status error, causing file corruption"
-                                if does_file_have_416_issue(dest_file_path)
-                                else "In this situation the file is likely corrupt",
-                                int(size_wait_timer / 60),
-                                MAX_RETRIES - size_retry_counter,
-                            )
+                            (
+                                "File '%s' download concluded but file size is not as expected"
+                                " (file size is %s bytes, expected %s bytes). %s - partially"
+                                " downloaded file will be deleted. Waiting %s minutes before"
+                                " retrying (will retry %s more times)"
+                            ),
+                            dest_file_name,
+                            downloaded_file_size,
+                            expected_file_size,
+                            "The server raised a 416 status error, causing file corruption"
+                            if does_file_have_416_issue(dest_file_path)
+                            else "In this situation the file is likely corrupt",
+                            int(size_wait_timer / 60),
+                            MAX_RETRIES - size_retry_counter,
                         )
                         os.remove(dest_file_path)
                         time.sleep(size_wait_timer)
@@ -861,11 +939,14 @@ def file_download(
                         )
                     else:
                         log.warning(
-                            "Failed to increase downloaded file '{}' to expected file size (final"
-                            " file size is {}, expected {}; this file has not been downloaded"
-                            " successfully".format(
-                                dest_file_name, downloaded_file_size, expected_file_size
-                            )
+                            (
+                                "Failed to increase downloaded file '%s' to expected file size"
+                                " (final file size is %s, expected %s; this file has not been"
+                                " downloaded successfully"
+                            ),
+                            dest_file_name,
+                            downloaded_file_size,
+                            expected_file_size,
                         )
                         return
 
@@ -880,15 +961,14 @@ def file_download(
     # amount of data downloaded in this session, for accurate stats on how long it took to download
     downloaded_data_in_mb = ((expected_file_size - initial_file_size) / 1024) / 1024
     log.info(
-        "{}'{}'{} - download completed in {}{}".format(
-            bold_grey,
-            dest_file_name,
-            green,
-            datetime.timedelta(seconds=round(int(duration.total_seconds()))),
-            " ({:.2f}MB per minute)".format(downloaded_data_in_mb / duration_in_minutes)
-            if expected_file_size > 1048576  # 1MB; seems inaccurate for files beneath this size
-            else "",
-        )
+        "%s'%s'%s - download completed in %s%s",
+        bold_grey,
+        dest_file_name,
+        green,
+        datetime.timedelta(seconds=round(int(duration.total_seconds()))),
+        " ({:.2f}MB per minute)".format(downloaded_data_in_mb / duration_in_minutes)
+        if expected_file_size > 1048576  # 1MB; seems inaccurate for files beneath this size
+        else "",
     )
     # If user has opted to verify downloads, add the task to the hash_pool
     if chunk_number is None:  # Only hash if we're in a thread that isn't downloading a file chunk
@@ -896,7 +976,7 @@ def file_download(
             # Don't hash the [identifier]_files.xml file, as this regularly gives false
             # positives (see README Known Issues)
             if dest_file_name != "{}_files.xml".format(identifier):
-                hash_pool.starmap_async(
+                hash_pool.starmap_async(  # type: ignore
                     check_hash, iterable=[(dest_file_path, ia_md5)], callback=log_update_callback
                 )
 
@@ -922,7 +1002,7 @@ def download(
     # Create output folder if it doesn't already exist
     pathlib.Path(output_folder).mkdir(parents=True, exist_ok=True)
 
-    log.info("'{}' contents will be downloaded to '{}'".format(identifier, output_folder))
+    log.info("'%s' contents will be downloaded to '%s'", identifier, output_folder)
 
     # If user has set to verify, create a new multiprocessing.Pool whose reference will be passed
     # to each download thread to allow for non-blocking hashing
@@ -932,10 +1012,13 @@ def download(
 
     # See if the items exist in the cache
     cache_folder = os.path.join(cache_parent_folder, identifier)
-    item = None
+    cached_item = None
 
+    @dataclass
     class CacheDict:
         """Using this simply to allow for a custom attribute (item_metadata) if we use cache"""
+
+        item_metadata: typing.Dict[str, typing.Any] = field(default_factory=dict)
 
     if not cache_refresh and os.path.isdir(cache_folder):
         cache_files = sorted(
@@ -953,14 +1036,12 @@ def download(
             now_datetime = datetime.datetime.now()
             if now_datetime - datetime.timedelta(weeks=1) <= file_datetime <= now_datetime:
                 log.debug(
-                    "Cached data from {} will be used for item '{}'".format(
-                        datetime_str, identifier
-                    )
+                    "Cached data from %s will be used for item '%s'", datetime_str, identifier
                 )
-                item = CacheDict()
-                item.item_metadata = {}
-                item.item_metadata["files"] = []
-                with open(cache_file, "r") as file_handler:
+
+                cached_item = CacheDict()
+                cached_item.item_metadata["files"] = []
+                with open(cache_file, "r", encoding="utf-8") as file_handler:
                     try:
                         for line in file_handler:
                             _, file_path, size, md5, mtime = line.strip().split("|")
@@ -969,45 +1050,52 @@ def download(
                             item_dict["size"] = size
                             item_dict["md5"] = md5
                             item_dict["mtime"] = mtime
-                            item.item_metadata["files"].append(item_dict)
+                            cached_item.item_metadata["files"].append(item_dict)
                     except ValueError:
                         log.info(
-                            "Cache file '{}' does not match expected format - cache data will"
-                            " be redownloaded".format(cache_file)
+                            (
+                                "Cache file '%s' does not match expected format - cache data will"
+                                " be redownloaded"
+                            ),
+                            cache_file,
                         )
-                        item = None
+                        cached_item = None
 
-    if item is None:
+    live_item = None
+    if cached_item is None:
         connection_retry_counter = 0
         connection_wait_timer = 600
         while True:
             try:
                 # Get Internet Archive metadata for the provided identifier
-                item = internetarchive.get_item(identifier)
-                if "item_last_updated" in item.item_metadata:
+                live_item = internetarchive.get_item(identifier)
+                if live_item is not None and "item_last_updated" in live_item.item_metadata:
                     item_updated_time = datetime.datetime.fromtimestamp(
-                        int(item.item_metadata["item_last_updated"])
+                        int(live_item.item_metadata["item_last_updated"])
                     )
                     if item_updated_time > (datetime.datetime.now() - datetime.timedelta(weeks=1)):
                         log.warning(
-                            "Internet Archive item '{}' was updated within the last week (last"
-                            " updated on {}) - verification/corruption issues may occur if"
-                            " files are being updated by the uploader. If such errors occur"
-                            " when resuming a download, recommend using the '--cacherefresh'"
-                            " flag".format(
-                                identifier, item_updated_time.strftime("%Y-%m-%d %H:%M:%S")
-                            )
+                            (
+                                "Internet Archive item '%s' was updated within the last week (last"
+                                " updated on %s) - verification/corruption issues may occur if"
+                                " files are being updated by the uploader. If such errors occur"
+                                " when resuming a download, recommend using the '--cacherefresh'"
+                                " flag"
+                            ),
+                            identifier,
+                            item_updated_time.strftime("%Y-%m-%d %H:%M:%S"),
                         )
             except requests.exceptions.ConnectionError:
                 if connection_retry_counter < MAX_RETRIES:
                     log.info(
-                        "ConnectionError occurred when attempting to connect to Internet"
-                        " Archive to get info for item '{}' - is internet connection active?"
-                        " Waiting {} minutes before retrying (will retry {} more times)".format(
-                            identifier,
-                            int(connection_wait_timer / 60),
-                            MAX_RETRIES - connection_retry_counter,
-                        )
+                        (
+                            "ConnectionError occurred when attempting to connect to Internet"
+                            " Archive to get info for item '%s' - is internet connection active?"
+                            " Waiting %s minutes before retrying (will retry %s more times)"
+                        ),
+                        identifier,
+                        int(connection_wait_timer / 60),
+                        MAX_RETRIES - connection_retry_counter,
                     )
                     time.sleep(connection_wait_timer)
                     connection_retry_counter += 1
@@ -1016,17 +1104,20 @@ def download(
                     )
                 else:
                     log.warning(
-                        "ConnectionError persisted when attempting to connect to Internet"
-                        " Archive - is internet connection active? Download of item '{}' has"
-                        " failed".format(identifier)
+                        (
+                            "ConnectionError persisted when attempting to connect to Internet"
+                            " Archive - is internet connection active? Download of item '%s' has"
+                            " failed"
+                        ),
+                        identifier,
                     )
-                    item = None
+                    live_item = None
                     break
             # If no further errors, break from the True loop
             else:
                 break
 
-    if item is None:
+    if cached_item is None and live_item is None:
         return
 
     # Write metadata for files associated with IA identifier to a file, and populate
@@ -1034,7 +1125,10 @@ def download(
     item_file_count = 0
     item_total_size = 0
     item_filtered_files_size = 0
-    if "files" in item.item_metadata:
+
+    item = live_item if live_item is not None else cached_item
+
+    if item is not None and "files" in item.item_metadata:
         # Create cache folder for item if it doesn't already exist
         pathlib.Path(cache_folder).mkdir(parents=True, exist_ok=True)
 
@@ -1050,6 +1144,7 @@ def download(
                     ),
                 ),
                 "w",
+                encoding="utf-8",
             )
         for file in item.item_metadata["files"]:
             item_file_count += 1
@@ -1059,10 +1154,10 @@ def download(
             # or mtime data; the below will set a default size/mtime of '-1' where needed
             if "size" not in file:
                 file["size"] = -1
-                log.debug("'{}' has no size metadata".format(file["name"]))
+                log.debug("'%s' has no size metadata", file["name"])
             if "mtime" not in file:
                 file["mtime"] = -1
-                log.debug("'{}' has no mtime metadata".format(file["name"]))
+                log.debug("'%s' has no mtime metadata", file["name"])
             log_write_str = "{}|{}|{}|{}|{}\n".format(
                 identifier, file["name"], file["size"], file["md5"], file["mtime"]
             )
@@ -1121,9 +1216,9 @@ def download(
             )
             if size_verification:
                 log.info(
-                    "'{}' appears to have been fully downloaded in folder '{}' - skipping".format(
-                        identifier, output_folder
-                    )
+                    "'%s' appears to have been fully downloaded in folder '%s' - skipping",
+                    identifier,
+                    output_folder,
                 )
                 return
 
@@ -1131,46 +1226,57 @@ def download(
             if not invert_file_filtering:
                 if len(download_queue) > 0:
                     log.info(
-                        "{} files ({}) match file filter(s) '{}' (case insensitive) and will be"
-                        " downloaded (out of a total of {} files ({}) available)".format(
-                            len(download_queue),
-                            bytes_filesize_to_readable_str(item_filtered_files_size),
-                            " ".join(file_filters),
-                            item_file_count,
-                            bytes_filesize_to_readable_str(item_total_size),
-                        )
+                        (
+                            "%s files (%s) match file filter(s) '%s' (case insensitive) and will be"
+                            " downloaded (out of a total of %s files (%s) available)"
+                        ),
+                        len(download_queue),
+                        bytes_filesize_to_readable_str(item_filtered_files_size),
+                        " ".join(file_filters),
+                        item_file_count,
+                        bytes_filesize_to_readable_str(item_total_size),
                     )
+
                 else:
                     log.info(
-                        "No files match the filter(s) '{}' in item '{}' - no downloads will be"
-                        " performed".format(" ".join(file_filters), identifier)
+                        (
+                            "No files match the filter(s) '%s' in item '%s' - no downloads will be"
+                            " performed"
+                        ),
+                        " ".join(file_filters),
+                        identifier,
                     )
+
                     return
             else:
                 if len(download_queue) > 0:
                     log.info(
-                        "{} files ({}) NOT matching file filter(s) '{}' (case insensitive) will"
-                        " be downloaded (out of a total of {} files ({}) available)".format(
-                            len(download_queue),
-                            bytes_filesize_to_readable_str(item_filtered_files_size),
-                            " ".join(file_filters),
-                            item_file_count,
-                            bytes_filesize_to_readable_str(item_total_size),
-                        )
+                        (
+                            "%s files (%s) NOT matching file filter(s) '%s' (case insensitive) will"
+                            " be downloaded (out of a total of %s files (%s) available)"
+                        ),
+                        len(download_queue),
+                        bytes_filesize_to_readable_str(item_filtered_files_size),
+                        " ".join(file_filters),
+                        item_file_count,
+                        bytes_filesize_to_readable_str(item_total_size),
                     )
                 else:
                     log.info(
-                        "All files are excluded by filter(s) '{}' in item '{}' - no downloads"
-                        " will be performed".format(" ".join(file_filters), identifier)
+                        (
+                            "All files are excluded by filter(s) '%s' in item '%s' - no downloads"
+                            " will be performed"
+                        ),
+                        " ".join(file_filters),
+                        identifier,
                     )
                     return
         else:
             log.info(
-                "'{}' contains {} files ({})".format(
-                    identifier,
-                    len(download_queue),
-                    bytes_filesize_to_readable_str(item_total_size),
-                )
+                "'%s' contains %s files (%s)",
+                identifier,
+                len(download_queue),
+                bytes_filesize_to_readable_str(item_total_size),
             )
 
         # Running under context management here lets the user ctrl+c out and not get a
@@ -1186,7 +1292,7 @@ def download(
         # Do a 'basic' verification of data (just checking file sizes and paths, not hash
         # values) - this is separate to hash checks that will be performed as downloads
         # complete if the user has opted to '--verify'
-        log.info("Download phase complete for item '{}'".format(identifier))
+        log.info("Download phase complete for item '%s'", identifier)
         # Ensure hash file is written to disk to use in verify function
         if hash_file is not None:
             hash_file.flush()
@@ -1204,8 +1310,11 @@ def download(
 
     else:
         log.warning(
-            "No files found associated with Internet Archive identifier '{}' (check that"
-            " the correct identifier has been entered)".format(identifier)
+            (
+                "No files found associated with Internet Archive identifier '%s' (check that"
+                " the correct identifier has been entered)"
+            ),
+            identifier,
         )
     if hash_pool is not None:
         log.debug("Waiting for hash tasks to complete")
@@ -1215,7 +1324,7 @@ def download(
 
 def verify(
     hash_file: typing.Optional[str],
-    data_folders: str,
+    data_folders: typing.List[str],
     no_paths_flag: bool,
     hash_flag: bool,
     cache_parent_folder: str,
@@ -1230,11 +1339,11 @@ def verify(
     else:
         log = logging.getLogger(__name__)
     if hash_file is not None and not os.path.isfile(hash_file):
-        log.error("File '{}' does not exist".format(hash_file))
+        log.error("File '%s' does not exist", hash_file)
         return False
     for data_folder in data_folders:
         if not os.path.isdir(data_folder):
-            log.error("Folder '{}' does not exist".format(data_folder))
+            log.error("Folder '%s' does not exist", data_folder)
             return False
 
     errors = 0
@@ -1249,8 +1358,11 @@ def verify(
                 )
             except ValueError:
                 log.error(
-                    "Hash file '{}' does not match expected format - cannot be used for"
-                    " verification".format(hash_file)
+                    (
+                        "Hash file '%s' does not match expected format - cannot be used for"
+                        " verification"
+                    ),
+                    hash_file,
                 )
                 return False
         else:
@@ -1262,10 +1374,13 @@ def verify(
             hashfile_metadata = {}
             if len(subfolders) == 0:
                 log.warning(
-                    "No item folders were found in provided data folder '{}' -"
-                    " make sure the parent download folder was provided rather than the"
-                    " item subfolder (e.g. provide '/downloads/' rather than"
-                    " '/downloads/item/'".format(data_folder)
+                    (
+                        "No item folders were found in provided data folder '%s' -"
+                        " make sure the parent download folder was provided rather than the"
+                        " item subfolder (e.g. provide '/downloads/' rather than"
+                        " '/downloads/item/'"
+                    ),
+                    data_folder,
                 )
             for subfolder in subfolders:
                 if identifiers is not None:
@@ -1296,20 +1411,29 @@ def verify(
                             )
                         except ValueError:
                             log.warning(
-                                "Cache file '{}' does not match expected format - cannot be used"
-                                " for verification".format(cache_file)
+                                (
+                                    "Cache file '%s' does not match expected format - cannot be"
+                                    " used for verification"
+                                ),
+                                cache_file,
                             )
                             missing_metadata_items.append(subfolder)
                     else:
                         log.warning(
-                            "Cache data not found for subfolder/item '{}' - files for this item"
-                            " will not be checked".format(subfolder)
+                            (
+                                "Cache data not found for subfolder/item '%s' - files for this item"
+                                " will not be checked"
+                            ),
+                            subfolder,
                         )
                         missing_metadata_items.append(subfolder)
                 else:
                     log.warning(
-                        "Cache data not found for subfolder/item '{}' - files for this item will"
-                        " not be checked".format(subfolder)
+                        (
+                            "Cache data not found for subfolder/item '%s' - files for this item"
+                            " will not be checked"
+                        ),
+                        subfolder,
                     )
                     missing_metadata_items.append(subfolder)
 
@@ -1331,19 +1455,18 @@ def verify(
 
         if identifiers is None:
             log.info(
-                "Verification of {} metadata for files in folder '{}' begun{}".format(
-                    md5_or_size_str,
-                    data_folder,
-                    " (using hash file '{}')".format(hash_file) if hash_file is not None else "",
-                )
+                "Verification of %s metadata for files in folder '%s' begun%s",
+                md5_or_size_str,
+                data_folder,
+                " (using hash file '{}')".format(hash_file) if hash_file is not None else "",
             )
+
         else:
             log.info(
-                "Verification of {} metadata for item(s) {} files in folder '{}' begun".format(
-                    md5_or_size_str,
-                    ", ".join(["'{}'".format(identifier) for identifier in identifiers]),
-                    data_folder,
-                )
+                "Verification of %s metadata for item(s) %s files in folder '%s' begun",
+                md5_or_size_str,
+                ", ".join(["'{}'".format(identifier) for identifier in identifiers]),
+                data_folder,
             )
 
         mismatch_count = 0
@@ -1366,10 +1489,14 @@ def verify(
             for identifier_dir in unique_identifier_dirs_from_ia_metadata:
                 if not os.path.isdir(os.path.join(data_folder, identifier_dir)):
                     log.warning(
-                        "Expected item folder '{}' was not found in provided data folder '{}' -"
-                        " make sure the parent download folder was provided rather than the"
-                        " item subfolder (e.g. provide '/downloads/' rather than"
-                        " '/downloads/item/'".format(identifier_dir, data_folder)
+                        (
+                            "Expected item folder '%s' was not found in provided data folder '%s' -"
+                            " make sure the parent download folder was provided rather than the"
+                            " item subfolder (e.g. provide '/downloads/' rather than"
+                            " '/downloads/item/'"
+                        ),
+                        identifier_dir,
+                        data_folder,
                     )
                     nonexistent_dirs.append(identifier_dir)
 
@@ -1385,16 +1512,13 @@ def verify(
                     if pathlib.Path(relative_path).parts[0] == nonexistent_dir
                 ]
                 log.warning(
-                    "Files in non-existent folder '{}' not found: {}".format(
-                        nonexistent_dir,
-                        ", ".join(
-                            [
-                                "'{}'".format(nonexistent_file)
-                                for nonexistent_file in nonexistent_files
-                            ]
-                        ),
-                    )
+                    "Files in non-existent folder '%s' not found: %s",
+                    nonexistent_dir,
+                    ", ".join(
+                        ["'{}'".format(nonexistent_file) for nonexistent_file in nonexistent_files]
+                    ),
                 )
+
                 mismatch_count += len(nonexistent_files)
                 # Delete non-existent files from the hashfile_metadata so we don't end up
                 # iterating these later and printing more warning messages than necessary
@@ -1429,38 +1553,41 @@ def verify(
                 if value not in folder_metadata.values()
             ]:
                 log.warning(
-                    "{} '{}' (original filename(s) '{}') not found in data folder".format(
-                        md5_or_size_str,
-                        value,
-                        [k for k, v in hashfile_metadata.items() if v == value],
-                    )
+                    "%s '%s' (original filename(s) '%s') not found in data folder",
+                    md5_or_size_str,
+                    value,
+                    [k for k, v in hashfile_metadata.items() if v == value],
                 )
                 mismatch_count += 1
 
         else:
             for file_path, value in hashfile_metadata.items():
                 if file_path not in folder_metadata:
-                    log.warning(
-                        "File '{}' not found in data folder '{}'".format(file_path, data_folder)
-                    )
+                    log.warning("File '%s' not found in data folder '%s'", file_path, data_folder)
                     mismatch_count += 1
                 else:
                     if value != folder_metadata[file_path]:
                         if value != "-1":
                             log.warning(
-                                "File '{}' {} does not match ('{}' in IA metadata, '{}' in data"
-                                " folder)".format(
-                                    file_path,
-                                    md5_or_size_str,
-                                    value,
-                                    folder_metadata[file_path],
-                                )
+                                (
+                                    "File '%s' %s does not match ('%s' in IA metadata, '%s' in data"
+                                    " folder)"
+                                ),
+                                file_path,
+                                md5_or_size_str,
+                                value,
+                                folder_metadata[file_path],
                             )
+
                             mismatch_count += 1
                         else:
                             log.debug(
-                                "File '{}' {} is not available in IA metadata, so verification"
-                                " not performed on this file".format(file_path, md5_or_size_str)
+                                (
+                                    "File '%s' %s is not available in IA metadata, so verification"
+                                    " not performed on this file"
+                                ),
+                                file_path,
+                                md5_or_size_str,
                             )
 
         issue_message = ""
@@ -1482,14 +1609,13 @@ def verify(
         else:
             issue_message = issue_message[:-2]
         if identifiers is None:
-            log.info("Verification of folder '{}' complete: {}".format(data_folder, issue_message))
+            log.info("Verification of folder '%s' complete: %s", data_folder, issue_message)
         else:
             log.info(
-                "Verification of item(s) {} in folder '{}' complete: {}".format(
-                    ", ".join(["'{}'".format(identifier) for identifier in identifiers]),
-                    data_folder,
-                    issue_message,
-                )
+                "Verification of item(s) %s in folder '%s' complete: %s",
+                ", ".join(["'{}'".format(identifier) for identifier in identifiers]),
+                data_folder,
+                issue_message,
             )
         errors += len(missing_metadata_items) + mismatch_count
     if errors > 0:
@@ -1521,11 +1647,10 @@ def get_identifiers_from_search_term(
             now_datetime = datetime.datetime.now()
             if now_datetime - datetime.timedelta(weeks=1) <= file_datetime <= now_datetime:
                 log.debug(
-                    "Cached data from {} will be used for search term '{}'".format(
-                        datetime_str, search
-                    )
+                    "Cached data from %s will be used for search term '%s'", datetime_str, search
                 )
-                with open(cache_file, "r") as file_handler:
+
+                with open(cache_file, "r", encoding="utf-8") as file_handler:
                     for line in file_handler:
                         identifiers.append(line.strip())
     if len(identifiers) == 0:
@@ -1540,8 +1665,12 @@ def get_identifiers_from_search_term(
                     identifiers.append(search_result["identifier"])
                 if len(identifiers) > 0:
                     log.info(
-                        "Internet Archive search term '{}' contains {} individual Internet"
-                        " Archive items; each will be downloaded".format(search, len(identifiers))
+                        (
+                            "Internet Archive search term '%s' contains %s individual Internet"
+                            " Archive items; each will be downloaded"
+                        ),
+                        search,
+                        len(identifiers),
                     )
                     # Create cache folder for search if it doesn't already exist
                     pathlib.Path(cache_folder).mkdir(parents=True, exist_ok=True)
@@ -1562,22 +1691,26 @@ def get_identifiers_from_search_term(
                             file_handler.write("{}\n".format(identifier))
                 else:
                     log.warning(
-                        "No items associated with search term '{}' were identified - was the"
-                        " search term entered correctly?".format(search)
+                        (
+                            "No items associated with search term '%s' were identified - was the"
+                            " search term entered correctly?"
+                        ),
+                        search,
                     )
                     return []
             except (requests.exceptions.ConnectionError, requests.exceptions.ReadTimeout):
                 if connection_retry_counter < MAX_RETRIES:
                     log.info(
-                        "Connection error occurred when attempting to connect to Internet"
-                        " Archive to get info for search term '{}' - is internet connection"
-                        " active? Waiting {} minutes before retrying (will retry {} more times)"
-                        .format(
-                            search,
-                            int(connection_wait_timer / 60),
-                            MAX_RETRIES - connection_retry_counter,
-                        )
+                        (
+                            "Connection error occurred when attempting to connect to Internet"
+                            " Archive to get info for search term '%s' - is internet connection"
+                            " active? Waiting %s minutes before retrying (will retry %s more times)"
+                        ),
+                        search,
+                        int(connection_wait_timer / 60),
+                        MAX_RETRIES - connection_retry_counter,
                     )
+
                     time.sleep(connection_wait_timer)
                     connection_retry_counter += 1
                     connection_wait_timer *= (
@@ -1585,9 +1718,12 @@ def get_identifiers_from_search_term(
                     )
                 else:
                     log.warning(
-                        "Connection error persisted when attempting to connect to Internet"
-                        " Archive - is internet connection active? Download of search term '{}'"
-                        " items have failed".format(search)
+                        (
+                            "Connection error persisted when attempting to connect to Internet"
+                            " Archive - is internet connection active? Download of search term '%s'"
+                            " items have failed"
+                        ),
+                        search,
                     )
                     return []
             # If no further errors, break from the True loop
@@ -1810,7 +1946,7 @@ def main() -> None:
         "Internet Archive is a non-profit organisation that is experiencing unprecedented service"
         " demand. Please consider making a donation: https://archive.org/donate"
     )
-    log.info("Logs will be stored in folder '{}'".format(args.logfolder))
+    log.info("Logs will be stored in folder '%s'", args.logfolder)
 
     try:
         if args.command == "download":
@@ -1829,9 +1965,7 @@ def main() -> None:
                     return
             if args.hashfile is not None:
                 log.info(
-                    "Internet Archive metadata will be written to hash file at '{}'".format(
-                        args.hashfile
-                    )
+                    "Internet Archive metadata will be written to hash file at '%s'", args.hashfile
                 )
             if args.threads > 5 or args.split > 5:
                 log.info(
@@ -1849,7 +1983,7 @@ def main() -> None:
                     args.threads = 1
             hashfile_file_handler = None
             if args.hashfile:
-                hashfile_file_handler = open(args.hashfile, "w")
+                hashfile_file_handler = open(args.hashfile, "w", encoding="utf-8")
             identifiers = args.identifiers if args.identifiers is not None else []
             if args.search:
                 for search in args.search:
@@ -1875,7 +2009,7 @@ def main() -> None:
                     cache_refresh=args.cacherefresh,
                 )
 
-            if args.hashfile:
+            if hashfile_file_handler is not None:
                 hashfile_file_handler.close()
 
         elif args.command == "verify":
@@ -1892,11 +2026,12 @@ def main() -> None:
 
         if counter_handler.count["WARNING"] > 0 or counter_handler.count["ERROR"] > 0:
             log.warning(
-                "Script complete; {} warnings/errors occurred requiring review (see log entries"
-                " above, replicated in folder '{}')".format(
-                    counter_handler.count["WARNING"] + counter_handler.count["ERROR"],
-                    args.logfolder,
-                )
+                (
+                    "Script complete; %s warnings/errors occurred requiring review (see log entries"
+                    " above, replicated in folder '%s')"
+                ),
+                counter_handler.count["WARNING"] + counter_handler.count["ERROR"],
+                args.logfolder,
             )
         else:
             log.info("Script complete; no errors reported")
@@ -1906,7 +2041,7 @@ def main() -> None:
             "KeyboardInterrupt received, quitting immediately (any in-progress downloads or"
             " verifications have been terminated)"
         )
-    except Exception:
+    except Exception:  # pylint: disable=broad-exception-caught
         log.exception("Exception occurred:")
 
 

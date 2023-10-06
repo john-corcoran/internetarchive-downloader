@@ -159,6 +159,7 @@ cython_debug/
 .gitconfig
 .history
 .vscode
+.python-version
 Dockerfile
 # project specific
 ia_downloader_logs/
