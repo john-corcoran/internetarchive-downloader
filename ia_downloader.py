@@ -993,6 +993,7 @@ def download(
     invert_file_filtering: bool,
     cache_parent_folder: str,
     cache_refresh: bool,
+    dryrun: bool,
 ) -> None:
     """Download files associated with an Internet Archive identifier"""
     log = logging.getLogger(__name__)
@@ -1278,6 +1279,15 @@ def download(
                 len(download_queue),
                 bytes_filesize_to_readable_str(item_total_size),
             )
+
+        # dryrun
+        if dryrun:
+            for _, filename, *_ in download_queue:
+                log.info(
+                    "'%s' - would download, dryrun",
+                    filename
+                )
+            return
 
         # Running under context management here lets the user ctrl+c out and not get a
         # "ResourceWarning: unclosed running multiprocessing pool
@@ -1869,6 +1879,13 @@ def main() -> None:
         action="store_true",
         help="Flag to update any cached Internet Archive metadata from previous script executions",
     )
+    download_parser.add_argument(
+        "--dryrun",
+        default=False,
+        action="store_true",
+        help="Dry run, do not download actual files",
+    )
+
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument(
@@ -2007,6 +2024,7 @@ def main() -> None:
                     invert_file_filtering=args.invertfilefiltering,
                     cache_parent_folder=os.path.join(args.logfolder, log_subfolders[1]),
                     cache_refresh=args.cacherefresh,
+                    dryrun=args.dryrun,
                 )
 
             if hashfile_file_handler is not None:
