@@ -88,7 +88,7 @@ class TermEscapeCodeFilter(logging.Filter):
 
     def filter(self, record):
         escape_re = re.compile(r"\x1b\[[0-9;]*m")
-        record.msg_without_colours = re.sub(escape_re, "", str(record.msg))
+        record.msg_without_colours = re.sub(escape_re, "", str(record.getMessage()))
         return True
 
 
