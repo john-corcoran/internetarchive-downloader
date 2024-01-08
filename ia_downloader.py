@@ -196,9 +196,21 @@ def get_metadata_from_hashfile(
     identifier_filter: typing.Optional[typing.List[str]] = None,
     file_filters: typing.Optional[typing.List[str]] = None,
     invert_file_filtering: bool = False,
+    reg_filters: typing.Optional[typing.List[str]] = None,
+    exreg_filters: typing.Optional[typing.List[str]] = None,
 ) -> typing.Dict[str, str]:
     """Return dict of file paths and associated metadata parsed from IA hash metadata CSV"""
     results = {}  # type: typing.Dict[str, str]
+    log = logging.getLogger(__name__)
+    try:
+        reg_list = [re.compile(reg, re.IGNORECASE) for reg in reg_filters] if reg_filters else []
+        exreg_list = [re.compile(reg, re.IGNORECASE) for reg in exreg_filters] if exreg_filters else []
+    except re.error as ex:
+        log.error(
+            "Regexp pattern error: %s",
+            str(ex)
+        )
+        return results
     with open(hash_file_path, "r", encoding="utf-8") as file_handler:
         for line in file_handler:
             identifier, file_path, size, md5, _ = line.strip().split("|")
@@ -211,6 +223,11 @@ def get_metadata_from_hashfile(
                 else:
                     if any(substring.lower() in file_path.lower() for substring in file_filters):
                         continue
+            if reg_list:
+                if not any(reg.search(file_path) for reg in reg_list):
+                    continue
+            if exreg_list and any(reg.search(file_path) for reg in exreg_list):
+                continue
             if identifier_filter is None or identifier in identifier_filter:
                 if hash_flag:
                     results[
@@ -1364,6 +1381,8 @@ def download(
             identifiers=[identifier],
             file_filters=file_filters,
             invert_file_filtering=invert_file_filtering,
+            reg_filters=reg_filters,
+            exreg_filters=exreg_filters
         )
 
     else:
@@ -1414,7 +1433,8 @@ def verify(
         if hash_file is not None:
             try:
                 hashfile_metadata = get_metadata_from_hashfile(
-                    hash_file, hash_flag, identifiers, file_filters, invert_file_filtering
+                    hash_file, hash_flag, identifiers, file_filters, invert_file_filtering,
+                    reg_filters, exreg_filters
                 )
             except ValueError:
                 log.error(
@@ -1467,6 +1487,8 @@ def verify(
                                     identifiers,
                                     file_filters,
                                     invert_file_filtering,
+                                    reg_filters,
+                                    exreg_filters
                                 )
                             )
                         except ValueError:
@@ -2015,6 +2037,28 @@ def main() -> None:
             " files are stored)"
         ),
     )
+    verify_parser.add_argument(
+        "--reg",
+        type=str,
+        nargs="+",
+        help=(
+            "One or more (space separated) regexp filters; only files that contain any of the"
+            " provided filter strings (case insensitive) will be downloaded. If multiple filters"
+            " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
+            " to hit)"
+        ),
+    )
+    verify_parser.add_argument(
+        "--exreg",
+        type=str,
+        nargs="+",
+        help=(
+            "One or more (space separated) exclude regexp filters; only files that contain any of the"
+            " provided filter strings (case insensitive) will be excluded. If multiple filters"
+            " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
+            " to hit)"
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -2113,6 +2157,8 @@ def main() -> None:
                 identifiers=args.identifiers,
                 file_filters=args.filefilters,
                 invert_file_filtering=args.invertfilefiltering,
+                reg_filters=args.reg,
+                exreg_filters=args.exreg,
             )
 
         if counter_handler.count["WARNING"] > 0 or counter_handler.count["ERROR"] > 0:
