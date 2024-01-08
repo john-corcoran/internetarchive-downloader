@@ -88,7 +88,7 @@ class TermEscapeCodeFilter(logging.Filter):
 
     def filter(self, record):
         escape_re = re.compile(r"\x1b\[[0-9;]*m")
-        record.msg_without_colours = re.sub(escape_re, "", str(record.msg))
+        record.msg_without_colours = re.sub(escape_re, "", str(record.getMessage()))
         return True
 
 
@@ -196,9 +196,21 @@ def get_metadata_from_hashfile(
     identifier_filter: typing.Optional[typing.List[str]] = None,
     file_filters: typing.Optional[typing.List[str]] = None,
     invert_file_filtering: bool = False,
+    reg_filters: typing.Optional[typing.List[str]] = None,
+    exreg_filters: typing.Optional[typing.List[str]] = None,
 ) -> typing.Dict[str, str]:
     """Return dict of file paths and associated metadata parsed from IA hash metadata CSV"""
     results = {}  # type: typing.Dict[str, str]
+    log = logging.getLogger(__name__)
+    try:
+        reg_list = [re.compile(reg, re.IGNORECASE) for reg in reg_filters] if reg_filters else []
+        exreg_list = [re.compile(reg, re.IGNORECASE) for reg in exreg_filters] if exreg_filters else []
+    except re.error as ex:
+        log.error(
+            "Regexp pattern error: %s",
+            str(ex)
+        )
+        return results
     with open(hash_file_path, "r", encoding="utf-8") as file_handler:
         for line in file_handler:
             identifier, file_path, size, md5, _ = line.strip().split("|")
@@ -211,6 +223,11 @@ def get_metadata_from_hashfile(
                 else:
                     if any(substring.lower() in file_path.lower() for substring in file_filters):
                         continue
+            if reg_list:
+                if not any(reg.search(file_path) for reg in reg_list):
+                    continue
+            if exreg_list and any(reg.search(file_path) for reg in exreg_list):
+                continue
             if identifier_filter is None or identifier in identifier_filter:
                 if hash_flag:
                     results[
@@ -993,6 +1010,9 @@ def download(
     invert_file_filtering: bool,
     cache_parent_folder: str,
     cache_refresh: bool,
+    dryrun: bool,
+    reg_filters: typing.Optional[typing.List[str]],
+    exreg_filters: typing.Optional[typing.List[str]],
 ) -> None:
     """Download files associated with an Internet Archive identifier"""
     log = logging.getLogger(__name__)
@@ -1128,6 +1148,17 @@ def download(
 
     item = live_item if live_item is not None else cached_item
 
+    reg_count = 0
+    exreg_count = 0
+    try:
+        reg_list = [re.compile(reg, re.IGNORECASE) for reg in reg_filters] if reg_filters else []
+        exreg_list = [re.compile(reg, re.IGNORECASE) for reg in exreg_filters] if exreg_filters else []
+    except re.error as ex:
+        log.error(
+            "Regexp pattern error: %s",
+            str(ex)
+        )
+        return
     if item is not None and "files" in item.item_metadata:
         # Create cache folder for item if it doesn't already exist
         pathlib.Path(cache_folder).mkdir(parents=True, exist_ok=True)
@@ -1146,6 +1177,7 @@ def download(
                 "w",
                 encoding="utf-8",
             )
+
         for file in item.item_metadata["files"]:
             item_file_count += 1
             if "size" in file:
@@ -1172,6 +1204,14 @@ def download(
                 else:
                     if any(substring.lower() in file["name"].lower() for substring in file_filters):
                         continue
+            if reg_list:
+                if any(reg.search(file["name"]) for reg in reg_list):
+                    reg_count += 1
+                else:
+                    continue
+            if exreg_list and any(reg.search(file["name"]) for reg in exreg_list):
+                exreg_count += 1
+                continue
             if file["size"] != -1:
                 item_filtered_files_size += int(file["size"])
             if hash_file is not None:
@@ -1271,6 +1311,32 @@ def download(
                         identifier,
                     )
                     return
+        elif reg_filters or exreg_filters:
+                if len(download_queue) > 0:
+                    log.info(
+                        (
+                            "%s files (%s) match regexp(s) (case insensitive) and will be"
+                            " downloaded (out of a total of %s files (%s) available)."
+                            " Matched (%s) files, excluded (%s) files"
+                        ),
+                        len(download_queue),
+                        bytes_filesize_to_readable_str(item_filtered_files_size),
+                        item_file_count,
+                        bytes_filesize_to_readable_str(item_total_size),
+                        reg_count,
+                        exreg_count
+                    )
+                else:
+                    log.info(
+                        (
+                            "No files match regexp in item '%s' - no downloads will be"
+                            " performed. Matcher (%s) files, excluded (%s) files"
+                        ),
+                        identifier,
+                        reg_count,
+                        exreg_count
+                    )
+                    return
         else:
             log.info(
                 "'%s' contains %s files (%s)",
@@ -1278,6 +1344,15 @@ def download(
                 len(download_queue),
                 bytes_filesize_to_readable_str(item_total_size),
             )
+
+        # dryrun
+        if dryrun:
+            for _, filename, *_ in download_queue:
+                log.info(
+                    "'%s' - would download, dryrun",
+                    filename
+                )
+            return
 
         # Running under context management here lets the user ctrl+c out and not get a
         # "ResourceWarning: unclosed running multiprocessing pool
@@ -1306,6 +1381,8 @@ def download(
             identifiers=[identifier],
             file_filters=file_filters,
             invert_file_filtering=invert_file_filtering,
+            reg_filters=reg_filters,
+            exreg_filters=exreg_filters
         )
 
     else:
@@ -1332,6 +1409,8 @@ def verify(
     file_filters: typing.Optional[typing.List[str]] = None,
     invert_file_filtering: bool = False,
     quiet: bool = False,
+    reg_filters: typing.Optional[typing.List[str]] = [],
+    exreg_filters: typing.Optional[typing.List[str]] = [],
 ) -> bool:
     """Verify that previously-downloaded files are complete"""
     if quiet:
@@ -1354,7 +1433,8 @@ def verify(
         if hash_file is not None:
             try:
                 hashfile_metadata = get_metadata_from_hashfile(
-                    hash_file, hash_flag, identifiers, file_filters, invert_file_filtering
+                    hash_file, hash_flag, identifiers, file_filters, invert_file_filtering,
+                    reg_filters, exreg_filters
                 )
             except ValueError:
                 log.error(
@@ -1407,6 +1487,8 @@ def verify(
                                     identifiers,
                                     file_filters,
                                     invert_file_filtering,
+                                    reg_filters,
+                                    exreg_filters
                                 )
                             )
                         except ValueError:
@@ -1869,6 +1951,34 @@ def main() -> None:
         action="store_true",
         help="Flag to update any cached Internet Archive metadata from previous script executions",
     )
+    download_parser.add_argument(
+        "--dryrun",
+        default=False,
+        action="store_true",
+        help="Dry run, do not download actual files",
+    )
+    download_parser.add_argument(
+        "--reg",
+        type=str,
+        nargs="+",
+        help=(
+            "One or more (space separated) regexp filters; only files that contain any of the"
+            " provided filter strings (case insensitive) will be downloaded. If multiple filters"
+            " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
+            " to hit)"
+        ),
+    )
+    download_parser.add_argument(
+        "--exreg",
+        type=str,
+        nargs="+",
+        help=(
+            "One or more (space separated) exclude regexp filters; only files that contain any of the"
+            " provided filter strings (case insensitive) will be excluded. If multiple filters"
+            " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
+            " to hit)"
+        ),
+    )
 
     verify_parser = subparsers.add_parser("verify")
     verify_parser.add_argument(
@@ -1925,6 +2035,28 @@ def main() -> None:
             "If files are no longer in the same relative paths, perform lookup based only on"
             " whether MD5 hashes are present in the data set (rather than also checking where those"
             " files are stored)"
+        ),
+    )
+    verify_parser.add_argument(
+        "--reg",
+        type=str,
+        nargs="+",
+        help=(
+            "One or more (space separated) regexp filters; only files that contain any of the"
+            " provided filter strings (case insensitive) will be downloaded. If multiple filters"
+            " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
+            " to hit)"
+        ),
+    )
+    verify_parser.add_argument(
+        "--exreg",
+        type=str,
+        nargs="+",
+        help=(
+            "One or more (space separated) exclude regexp filters; only files that contain any of the"
+            " provided filter strings (case insensitive) will be excluded. If multiple filters"
+            " are provided, the search will be an 'OR' (i.e. only one of the provided strings needs"
+            " to hit)"
         ),
     )
 
@@ -2007,6 +2139,9 @@ def main() -> None:
                     invert_file_filtering=args.invertfilefiltering,
                     cache_parent_folder=os.path.join(args.logfolder, log_subfolders[1]),
                     cache_refresh=args.cacherefresh,
+                    dryrun=args.dryrun,
+                    reg_filters=args.reg,
+                    exreg_filters=args.exreg,
                 )
 
             if hashfile_file_handler is not None:
@@ -2022,6 +2157,8 @@ def main() -> None:
                 identifiers=args.identifiers,
                 file_filters=args.filefilters,
                 invert_file_filtering=args.invertfilefiltering,
+                reg_filters=args.reg,
+                exreg_filters=args.exreg,
             )
 
         if counter_handler.count["WARNING"] > 0 or counter_handler.count["ERROR"] > 0:
